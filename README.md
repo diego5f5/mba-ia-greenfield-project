@@ -55,16 +55,24 @@ O diagrama de arquitetura completo (C4) está em `docs/diagrams/software-arch.me
 
 Os dois subprojetos têm stacks Docker **separadas**. Suba primeiro o backend, rode as migrations e depois o frontend.
 
-### 1. Backend (NestJS + PostgreSQL + Mailpit)
+### 1. Backend (NestJS + PostgreSQL + Mailpit + MinIO + Redis + worker de vídeo)
 
 ```bash
 cd nestjs-project
 
-# Sobe API, banco e Mailpit
+# Cria o .env (obrigatório: sem ele o MinIO não recebe credenciais e o
+# serviço minio-init falha, impedindo a API e o worker de subirem)
+cp .env.example .env
+
+# Sobe API, banco, Mailpit, MinIO, Redis e o video-worker
 docker compose up -d
 
-# Instala dependências (apenas na primeira vez)
+# Instala dependências (apenas na primeira vez; node_modules fica em um volume
+# do Docker compartilhado entre a API e o worker)
 docker compose exec nestjs-api npm install
+
+# Reinicia o worker, que não encontrou o node_modules na primeira subida
+docker compose restart video-worker
 
 # Cria o schema do banco (obrigatório — synchronize está desabilitado)
 docker compose exec nestjs-api npm run migration:run
@@ -80,6 +88,8 @@ Serviços disponíveis:
 | API NestJS | http://localhost:3000 |
 | PostgreSQL | `localhost:5432` (db/user/senha: `streamtube`) |
 | Mailpit (UI de e-mails) | http://localhost:8025 |
+| MinIO (API S3 / console) | http://localhost:9000 / http://localhost:9001 |
+| Redis (fila BullMQ) | `localhost:6379` |
 | Swagger (opcional) | http://localhost:3000/api/docs — habilite com `SWAGGER_ENABLED=true` |
 
 ### 2. Frontend (Next.js)
