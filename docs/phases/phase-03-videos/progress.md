@@ -1,7 +1,7 @@
 # phase-03-videos — Progress
 
 **Status:** in_progress
-**SIs:** 6/11 completed
+**SIs:** 7/11 completed
 
 ### SI-03.1 — Infra: dependências, configuração de storage/fila e serviços MinIO/Redis no Compose
 - **Status:** completed
@@ -64,9 +64,18 @@
   - `src/test/video-fixture.ts` usa `-movflags +faststart` para o `ffprobe` ler o MP4 por poucos range requests.
 
 ### SI-03.7 — Worker de vídeo: processor BullMQ, entrypoint próprio e serviço video-worker no Compose
-- **Status:** pending
-- **Tests:** —
-- **Observations:** none
+- **Status:** completed
+- **Tests:** 17 passing (`video-processing.processor.spec`, `video-processing.processor.integration-spec`, `worker.module.spec`); suíte completa 249 + 52 e2e, `tsc` e `lint` limpos
+- **Observations:**
+  - **Build separado (`tsconfig.worker.json`, fora do plano):** o worker compila para `dist-worker/`. Com o `dist/` compartilhado, o `nest start --watch` do `video-worker` e o do `nestjs-api` (`deleteOutDir: true`) apagariam a saída um do outro. Os scripts `start:worker`/`start:worker:dev` usam `-p tsconfig.worker.json`; `/dist-worker` entrou no `.gitignore`.
+  - **Entidades explícitas no `WorkerModule`:** `Video` referencia `Channel` → `User`, e sem os módulos da API o `autoLoadEntities` não registraria o grafo inteiro. O módulo lista `User`, `Channel`, `RefreshToken`, `VerificationToken` e `Video`.
+  - **Transições condicionais:** tanto o update para `ready` quanto o handler `failed` usam `WHERE status = 'processing'`, então uma falha tardia nunca sobrescreve um vídeo já `ready`. Há teste de integração para isso.
+  - **Redelivery:** reentregar o job de um vídeo `ready` não toca o registro (`updated_at` e `processed_at` iguais) nem a thumbnail; coberto por teste de integração.
+  - **Verificação ponta a ponta:** com o serviço `video-worker` real rodando, um vídeo enviado pelo `VideosService` (createVideo → parte → completeUpload) foi de `processing` a `ready` em ~1,4 s, com duração 3, metadados corretos e `thumbnail.jpg` (`image/jpeg`) no MinIO. Foi um spec temporário, removido depois.
+  - **Não verificado:** o critério "parar o worker com jobs pendentes e subir de novo" não foi exercitado manualmente; a persistência depende do Redis com AOF (SI-03.1) e do comportamento padrão do BullMQ.
+  - **Ambiente local:** o `compose.override.yaml` (não versionado) só montava o volume `node_modules` no `nestjs-api`; sem o mesmo volume no `video-worker` o `nest start` ficou parado lendo o `node_modules` do bind mount do Windows. Adicionei o volume ao serviço no override local — quem clonar o repositório precisa do mesmo ajuste no próprio override.
+  - `worker.module.spec.ts` abre conexões reais (Postgres/Redis), então pela regra do `CLAUDE.md` seria `*.integration-spec.ts`; mantive o nome do plano, como o `videos.module.spec.ts` já faz.
+  - Os testes de integração das SIs anteriores criam vídeos em `processing` com bytes que não são vídeo; com o `video-worker` no ar eles passam a `failed` (esperado, e esses testes não afirmam `status`).
 
 ### SI-03.8 — Consulta do vídeo e URLs de streaming e download
 - **Status:** pending

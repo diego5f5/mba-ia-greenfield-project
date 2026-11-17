@@ -35,3 +35,9 @@ export const VIDEO_PROCESSING_QUEUE_JOB_OPTIONS = {
   attempts: 3,
   backoff: { type: 'exponential', delay: 5000 },
 } as const;
+
+/** Lifetime of the internal presigned URL the worker feeds to ffprobe/ffmpeg. */
+export const VIDEO_PROCESSING_URL_TTL_SECONDS = 3600;
+
+export const videoThumbnailKey = (videoId: string): string =>
+  `videos/${videoId}/thumbnail.jpg`;

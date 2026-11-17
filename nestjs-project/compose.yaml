@@ -17,6 +17,23 @@ services:
       redis:
         condition: service_healthy
 
+  # Video processing worker (phase-03-videos/TD-07): same code as the API, no
+  # HTTP. Builds into dist-worker so its watch/clean never touches the API's dist.
+  video-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    command: ["npm", "run", "start:worker:dev"]
+    volumes:
+      - .:/home/node/app
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+
   db:
     image: postgres:17
     ports:
