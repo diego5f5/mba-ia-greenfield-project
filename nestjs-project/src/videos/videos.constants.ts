@@ -25,3 +25,13 @@ export const PUBLIC_ID_MAX_ATTEMPTS = 5;
 
 export const VIDEO_PROCESSING_QUEUE = 'video-processing' as const;
 export const PROCESS_VIDEO_JOB = 'process-video' as const;
+
+/**
+ * Retry policy of `process-video` (phase-03-videos/TD-11): 3 attempts with
+ * exponential backoff. Finished jobs are deliberately kept (no
+ * `removeOnComplete`/`removeOnFail`) so `jobId = videoId` keeps deduplicating.
+ */
+export const VIDEO_PROCESSING_QUEUE_JOB_OPTIONS = {
+  attempts: 3,
+  backoff: { type: 'exponential', delay: 5000 },
+} as const;

@@ -1,7 +1,7 @@
 # phase-03-videos — Progress
 
 **Status:** in_progress
-**SIs:** 4/11 completed
+**SIs:** 5/11 completed
 
 ### SI-03.1 — Infra: dependências, configuração de storage/fila e serviços MinIO/Redis no Compose
 - **Status:** completed
@@ -42,9 +42,16 @@
   - Nomes dos DTOs de resposta: `VideoResponseDto`, `CreateVideoResponseDto`, `UploadPartUrlsResponseDto` (convenção `*Dto` do projeto; o plano os chama `VideoResponse`).
 
 ### SI-03.5 — Conclusão do upload e publicação do job na fila BullMQ
-- **Status:** pending
-- **Tests:** —
-- **Observations:** none
+- **Status:** completed
+- **Tests:** 54 passing (`videos.service.spec`, `videos.service.integration-spec`, `videos.module.spec`, `storage.service.integration-spec`) + 52 e2e de regressão (app/swagger/auth, que agora sobem o `AppModule` com a conexão Redis)
+- **Observations:**
+  - **Correção de dependência 1 — `ioredis`:** o `bullmq` 6 declara `ioredis` como peer dependency *opcional*, então o `npm install bullmq` não o instala e qualquer `Queue` falha com `BullMQ could not load the optional 'ioredis' package`. Foi adicionado `ioredis@5.11.1` (exato; linha 5, mais recente com ≥2 semanas) como dependência direta. O `library-refs.md` da fase não registrava isso.
+  - **Correção de dependência 2 — `@nestjs/bullmq`:** a versão 12.0.0 fixada no plano (SI-03.1) é ESM-only (`"type": "module"`) e o Jest CommonJS do projeto não consegue carregá-la (`SyntaxError: Unexpected token 'export'` em todas as suítes que importam `AppModule`). Trocada por `@nestjs/bullmq@11.0.5` (CommonJS; aceita `bullmq ^6` e `@nestjs/core ^11`; mesma API). `library-refs.md` atualizado com as duas pinagens e a justificativa; o texto do plano (`phase-03-videos.md`, SI-03.1) foi mantido como está — o desvio fica registrado aqui e no `library-refs.md`.
+  - **Falha no enfileiramento (fora do plano):** se `queue.add` falhar (ex.: Redis fora do ar) depois da transição `draft → processing`, o vídeo ficaria preso em `processing` sem job, e uma nova chamada de conclusão seria no-op. O serviço agora o marca `failed` com `processing_error = 'ENQUEUE_FAILED: <causa>'` e relança o erro. Coberto por teste unitário.
+  - **Corrida entre conclusões simultâneas:** a transição usa `UPDATE ... WHERE status = 'draft'` (claim condicional) e, se o storage rejeitar a conclusão porque outra chamada já a concluiu, o serviço relê o vídeo e devolve o estado atual com `transitioned: false` em vez de `INVALID_UPLOAD_PARTS`. Ambos os ramos têm teste unitário.
+  - **Teste de integração × worker:** os testes não afirmam `status` no banco depois da conclusão, porque o serviço `video-worker` (SI-03.7) vai consumir jobs na mesma stack; a transição é verificada pelo retorno do serviço e pela presença do job (nome, payload `{ videoId }`, `jobId` = `videos.id`, `attempts: 3`). Os jobs criados pelos testes são removidos no `afterEach`.
+  - **"A API não consome jobs":** verificado manualmente — com só o `nestjs-api` rodando, um job publicado na fila `video-processing` permaneceu `waiting` com 0 workers conectados. `VideosModule` não registra nenhum `@Processor`.
+  - `VIDEO_PROCESSING_QUEUE_JOB_OPTIONS` (`attempts: 3`, backoff exponencial de 5000 ms, sem `removeOnComplete`/`removeOnFail`) fica em `videos.constants.ts` e é conferido por `videos.module.spec.ts` via `queue.defaultJobOptions`.
 
 ### SI-03.6 — MediaProbeService: extração de metadados e thumbnail com ffprobe/ffmpeg
 - **Status:** pending

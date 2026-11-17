@@ -13,9 +13,13 @@ libs:
     context7_id: "/taskforcesh/bullmq/v6.5.3"
     fetched_at: "2026-11-17T09:25:27-03:00"
   "@nestjs/bullmq":
-    version: "12.0.0"
+    version: "11.0.5"
     context7_id: "/nestjs/bull"
     fetched_at: "2026-11-17T09:25:27-03:00"
+  "ioredis":
+    version: "5.11.1"
+    context7_id: "/taskforcesh/bullmq/v6.5.3"
+    fetched_at: "2026-11-17T10:09:04-03:00"
 sources_mtime:
   docs/decisions/technical-decisions-phase-03-videos.md: "2026-11-17T09:24:06-03:00"
 ---
@@ -77,7 +81,17 @@ Used by `phase-03-videos/TD-04`, TD-06, TD-11.
 - **Final-failure detection:** in the `failed` worker event, compare `job.attemptsMade` with `job.opts.attempts` (or the error being `UnrecoverableError`) before marking the video `failed`.
 - **Connections:** for workers, ioredis `maxRetriesPerRequest` must be `null` (BullMQ sets it by default when it creates the connection from `{ host, port }`).
 
+### ioredis
+
+Used by `phase-03-videos/TD-04` (transport of `bullmq`/`@nestjs/bullmq`); never imported directly by project code.
+
+- `bullmq` 6 declares `ioredis` as an **optional** peer dependency (`>=5.0.0`), so `npm install bullmq` does **not** install it; without it every `Queue`/`Worker` throws `BullMQ could not load the optional 'ioredis' package`. It must be a direct dependency.
+- Pinned to the 5.x line (5.11.1), the latest at least two weeks old and the line BullMQ documents; the newer 6.0.0 major was not adopted.
+- Workers need `maxRetriesPerRequest: null`; BullMQ sets it when it builds the connection from `{ host, port }` (as `queueConfig` does).
+
 ### @nestjs/bullmq
+
+> **Pinned to 11.0.5, not 12.0.0 (corrected during `/implement` SI-03.5).** `@nestjs/bullmq` 12.x is published as ESM-only (`"type": "module"`), which the project's CommonJS Jest setup cannot load (`SyntaxError: Unexpected token 'export'`). 11.0.5 is CommonJS, accepts `bullmq ^6` and `@nestjs/core ^11`, and exposes the same API documented below.
 
 Used by `phase-03-videos/TD-04`, TD-07.
 

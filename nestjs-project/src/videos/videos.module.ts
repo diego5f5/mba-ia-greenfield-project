@@ -1,12 +1,29 @@
+import { BullModule } from '@nestjs/bullmq';
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ChannelsModule } from '../channels/channels.module';
 import { StorageModule } from '../storage/storage.module';
 import { Video } from './entities/video.entity';
+import {
+  VIDEO_PROCESSING_QUEUE,
+  VIDEO_PROCESSING_QUEUE_JOB_OPTIONS,
+} from './videos.constants';
 import { VideosService } from './videos.service';
 
+/**
+ * The API process is only a producer of `video-processing` jobs: the
+ * `@Processor` lives in the worker application context (phase-03-videos/TD-07).
+ */
 @Module({
-  imports: [TypeOrmModule.forFeature([Video]), ChannelsModule, StorageModule],
+  imports: [
+    TypeOrmModule.forFeature([Video]),
+    BullModule.registerQueue({
+      name: VIDEO_PROCESSING_QUEUE,
+      defaultJobOptions: VIDEO_PROCESSING_QUEUE_JOB_OPTIONS,
+    }),
+    ChannelsModule,
+    StorageModule,
+  ],
   providers: [VideosService],
 })
 export class VideosModule {}

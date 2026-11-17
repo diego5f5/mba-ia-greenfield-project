@@ -71,3 +71,13 @@ export class InvalidUploadPartsException extends DomainException {
     super('INVALID_UPLOAD_PARTS', 400, 'Upload parts are invalid');
   }
 }
+
+export class UploadSizeMismatchException extends DomainException {
+  constructor() {
+    super(
+      'UPLOAD_SIZE_MISMATCH',
+      422,
+      'Uploaded file size does not match the declared size',
+    );
+  }
+}

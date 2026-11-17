@@ -1,15 +1,20 @@
 import { randomUUID } from 'node:crypto';
+import { InjectQueue } from '@nestjs/bullmq';
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import type { Queue } from 'bullmq';
 import { Repository } from 'typeorm';
 import { ChannelsService } from '../channels/channels.service';
 import { isPgUniqueViolationOnColumn } from '../common/database/pg-errors.util';
 import {
   InvalidUploadPartsException,
   UploadNotInProgressException,
+  UploadSizeMismatchException,
   VideoNotFoundException,
 } from '../common/exceptions/domain.exception';
+import { MultipartUploadRejectedError } from '../storage/storage.errors';
 import { StorageService } from '../storage/storage.service';
+import { CompletedPartDto } from './dto/complete-upload.dto';
 import { CreateVideoResponseDto } from './dto/create-video-response.dto';
 import { CreateVideoDto } from './dto/create-video.dto';
 import { UploadPartUrlsResponseDto } from './dto/upload-part-urls-response.dto';
@@ -17,14 +22,26 @@ import { VideoResponseDto } from './dto/video-response.dto';
 import { Video, VideoStatus } from './entities/video.entity';
 import { generatePublicId } from './public-id.util';
 import { calculatePartCount } from './upload-plan.util';
+import { ProcessVideoJobData } from './video-processing.types';
 import {
+  PROCESS_VIDEO_JOB,
   PUBLIC_ID_MAX_ATTEMPTS,
+  VIDEO_MAX_FILE_SIZE_BYTES,
   VIDEO_PART_SIZE_BYTES,
+  VIDEO_PROCESSING_QUEUE,
   VIDEO_TITLE_MAX_LENGTH,
   VIDEO_URL_TTL_SECONDS,
 } from './videos.constants';
 
 const PUBLIC_ID_COLUMN = 'public_id';
+const UPLOAD_SIZE_MISMATCH_REASON = 'UPLOAD_SIZE_MISMATCH';
+const ENQUEUE_FAILED_REASON = 'ENQUEUE_FAILED';
+
+export interface CompleteUploadResult {
+  video: VideoResponseDto;
+  /** `true` only for the call that moved the video from draft to processing. */
+  transitioned: boolean;
+}
 
 type NewVideoFields = Pick<
   Video,
@@ -47,6 +64,8 @@ export class VideosService {
     private readonly videoRepository: Repository<Video>,
     private readonly channelsService: ChannelsService,
     private readonly storageService: StorageService,
+    @InjectQueue(VIDEO_PROCESSING_QUEUE)
+    private readonly videoProcessingQueue: Queue<ProcessVideoJobData>,
   ) {}
 
   /**
@@ -139,6 +158,112 @@ export class VideosService {
     );
 
     return { parts, expires_in: VIDEO_URL_TTL_SECONDS };
+  }
+
+  /**
+   * Completes the multipart upload, verifies the assembled object and moves
+   * the video `draft → processing`, enqueuing the `process-video` job
+   * (phase-03-videos/TD-06, TD-04, TD-11).
+   *
+   * Idempotent: a video that already left `draft` is returned untouched with
+   * `transitioned: false` and no storage or queue operation happens.
+   */
+  async completeUpload(
+    userId: string,
+    publicId: string,
+    parts: CompletedPartDto[],
+  ): Promise<CompleteUploadResult> {
+    const video = await this.findOwnedVideo(userId, publicId);
+    if (video.status !== VideoStatus.DRAFT || !video.upload_id) {
+      return { video: await this.toResponse(video), transitioned: false };
+    }
+
+    try {
+      await this.storageService.completeMultipartUpload(
+        video.source_key,
+        video.upload_id,
+        parts.map(({ part_number, etag }) => ({
+          partNumber: part_number,
+          etag,
+        })),
+      );
+    } catch (error) {
+      if (!(error instanceof MultipartUploadRejectedError)) {
+        throw error;
+      }
+      // A concurrent completion may have won the race: storage then no longer
+      // knows this upload. If so, report the current state instead of failing.
+      const current = await this.findOwnedVideo(userId, publicId);
+      if (current.status !== VideoStatus.DRAFT) {
+        return { video: await this.toResponse(current), transitioned: false };
+      }
+      throw new InvalidUploadPartsException();
+    }
+
+    const assembled = await this.storageService.headObject(video.source_key);
+    if (
+      !assembled ||
+      assembled.contentLength !== video.file_size_bytes ||
+      assembled.contentLength > VIDEO_MAX_FILE_SIZE_BYTES
+    ) {
+      await this.storageService.deleteObject(video.source_key);
+      await this.videoRepository.update(
+        { id: video.id, status: VideoStatus.DRAFT },
+        {
+          status: VideoStatus.FAILED,
+          processing_error: UPLOAD_SIZE_MISMATCH_REASON,
+          upload_id: null,
+          processed_at: new Date(),
+        },
+      );
+      throw new UploadSizeMismatchException();
+    }
+
+    // Conditional claim: only one caller can move the video out of `draft`.
+    const claim = await this.videoRepository.update(
+      { id: video.id, status: VideoStatus.DRAFT },
+      { status: VideoStatus.PROCESSING, upload_id: null },
+    );
+    if (!claim.affected) {
+      const current = await this.videoRepository.findOneByOrFail({
+        id: video.id,
+      });
+      return { video: await this.toResponse(current), transitioned: false };
+    }
+
+    await this.enqueueProcessing(video.id);
+
+    const processing = await this.videoRepository.findOneByOrFail({
+      id: video.id,
+    });
+    return { video: await this.toResponse(processing), transitioned: true };
+  }
+
+  /**
+   * Publishes the job after the status change is committed. `jobId = videoId`
+   * makes a repeated enqueue a no-op. If Redis is unreachable the video would
+   * stay in `processing` forever, so it is failed with a reason instead.
+   */
+  private async enqueueProcessing(videoId: string): Promise<void> {
+    try {
+      await this.videoProcessingQueue.add(
+        PROCESS_VIDEO_JOB,
+        { videoId },
+        { jobId: videoId },
+      );
+    } catch (error) {
+      await this.videoRepository.update(
+        { id: videoId },
+        {
+          status: VideoStatus.FAILED,
+          processing_error: `${ENQUEUE_FAILED_REASON}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+          processed_at: new Date(),
+        },
+      );
+      throw error;
+    }
   }
 
   /**
