@@ -18,14 +18,14 @@ Este é um projeto greenfield desenvolvido para demonstrar como construir uma ap
 
 ## Quadro Branco
 
-- [Quadro Branco](./whiteboard.png)
+- [Quadro Branco](./whiteboard.svg)
 
 ---
 
 ## 🎨 Design System (Figma)
 
 - [FC Tube.fig](./FC%20Tube.fig) — arquivo-fonte do **design system** do projeto no Figma.
-- [FC Tube sem padrão.fig](./FC%20Tube%20sem%20padrao.fig) — arquivo-fonte puro, sem tokens, cores, tipografia e espaçamento.
+- [FC Tube sem padrão.fig](./FC%20Tube%20sem%20padr%C3%A3o.fig) — arquivo-fonte puro, sem tokens, cores, tipografia e espaçamento.
 
 Contém os fundamentos visuais do StreamTube — tokens (cores, tipografia, espaçamento, raios), componentes e as telas da plataforma. É a referência de design para a implementação do frontend: os componentes em `next-frontend/components/ui` (shadcn) e os tokens em `next-frontend/app/globals.css` derivam deste arquivo. Abra-o no Figma (`Arquivo → Importar`) para consultar especificações e estados visuais.
 
