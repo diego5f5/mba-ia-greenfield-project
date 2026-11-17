@@ -5,8 +5,11 @@ interface TestDataSourceOptions {
   migrations?: (new () => MigrationInterface)[];
 }
 
+// Entity classes are passed explicitly (see typeorm-migrations rule).
+type EntityClass = abstract new (...args: never[]) => object;
+
 export function createTestDataSource(
-  entities: (Function | string | EntitySchema<any>)[],
+  entities: (EntityClass | string | EntitySchema<any>)[],
   options: TestDataSourceOptions = {},
 ): DataSource {
   const { synchronize = true, migrations } = options;
