@@ -273,7 +273,7 @@ Nos testes, que rodam dentro do container `nestjs-api`, `S3_PUBLIC_ENDPOINT` é 
 ### SI-03.9 — Endpoints de upload: POST /videos, POST /videos/{public_id}/upload/parts e POST /videos/{public_id}/upload/completion
 
 **Route:** POST /videos, POST /videos/{public_id}/upload/parts, POST /videos/{public_id}/upload/completion
-**Test Specs:** _pending /plan-test-specs_
+**Test Specs:** see `nestjs-project/specs/videos-upload.plan.md`
 **Authorization:** Authenticated; owner-only nas rotas com `{public_id}` (per `### Authorization Matrix`)
 
 **Description:** Expõe o fluxo de upload via HTTP em um `VideosController` fino que delega ao `VideosService`, com contratos, códigos de status e documentação OpenAPI conforme `### API Contracts`.
@@ -305,7 +305,7 @@ Nos testes, que rodam dentro do container `nestjs-api`, `S3_PUBLIC_ENDPOINT` é 
 ### SI-03.10 — Endpoints de consulta, streaming e download: GET /videos/{public_id}, /stream e /download
 
 **Route:** GET /videos/{public_id}, GET /videos/{public_id}/stream, GET /videos/{public_id}/download
-**Test Specs:** _pending /plan-test-specs_
+**Test Specs:** see `nestjs-project/specs/videos-delivery.plan.md`
 **Authorization:** Authenticated, owner-only (per `### Authorization Matrix`)
 
 **Description:** Expõe no `VideosController` a consulta do vídeo e a entrega por redirecionamento `302` para URLs pré-assinadas, fechando o fluxo upload → processamento → streaming/download.
