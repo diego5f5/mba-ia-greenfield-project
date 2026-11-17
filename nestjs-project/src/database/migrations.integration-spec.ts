@@ -14,6 +14,8 @@ const MANAGED_TABLES = [
   'verification_tokens',
 ];
 
+const MANAGED_ENUM_TYPES = ['verification_tokens_type_enum'];
+
 describe('Database migrations (integration)', () => {
   let dataSource: DataSource;
 
@@ -31,19 +33,27 @@ describe('Database migrations (integration)', () => {
 
     await dataSource.initialize();
 
-    await Promise.all([
-      ...MANAGED_TABLES.map((table) =>
-        dataSource.query(`DROP TABLE IF EXISTS "${table}" CASCADE`),
-      ),
-      dataSource.query(`DROP TABLE IF EXISTS "migrations" CASCADE`),
-    ]);
+    // Sequential: a single DataSource connection cannot run concurrent queries.
+    for (const table of [...MANAGED_TABLES, 'migrations']) {
+      await dataSource.query(`DROP TABLE IF EXISTS "${table}" CASCADE`);
+    }
+    // DROP TABLE ... CASCADE does not remove enum types created by migrations;
+    // leaving them makes the migration under test fail with "already exists".
+    for (const enumType of MANAGED_ENUM_TYPES) {
+      await dataSource.query(`DROP TYPE IF EXISTS "${enumType}" CASCADE`);
+    }
   });
 
   afterAll(async () => {
     // The second test undoes the last migration, leaving token tables missing.
     // Re-apply so the shared DB is fully migrated when subsequent suites run.
-    await dataSource.runMigrations();
-    await dataSource.destroy();
+    // `finally` guarantees the connection closes even if re-applying fails,
+    // otherwise the open pool keeps Jest from exiting.
+    try {
+      await dataSource.runMigrations();
+    } finally {
+      await dataSource.destroy();
+    }
   });
 
   it('should apply all migrations and create all four tables', async () => {
