@@ -1,7 +1,7 @@
 # phase-03-videos — Progress
 
 **Status:** in_progress
-**SIs:** 3/11 completed
+**SIs:** 4/11 completed
 
 ### SI-03.1 — Infra: dependências, configuração de storage/fila e serviços MinIO/Redis no Compose
 - **Status:** completed
@@ -31,9 +31,15 @@
   - Um script meu de inserção de import quebrou 10 arquivos de teste (arquivos CRLF; a busca por `;\n` falhou e o import caiu no início da primeira linha). Detectado pelo subagent de testes, corrigido e revalidado (88 testes verdes) antes do commit — nada disso chegou ao histórico.
 
 ### SI-03.4 — Pré-cadastro do vídeo como rascunho e URLs pré-assinadas das partes
-- **Status:** pending
-- **Tests:** —
-- **Observations:** none
+- **Status:** completed
+- **Tests:** 45 passing (`public-id.util.spec`, `videos.service.spec`, `videos.service.integration-spec`, `videos.module.spec`, `pg-errors.util.spec`, `channels.service.integration-spec` + `channels.service.spec` de regressão)
+- **Observations:**
+  - **Desvio do plano (SAVEPOINT):** o plano pedia SAVEPOINT por tentativa no retry de `public_id`. Como o `INSERT` não roda dentro de transação, a violação de unicidade não deixa nada "abortado" e o retry simples basta — o SAVEPOINT de `typeorm-queries.md` só se aplica dentro de `dataSource.transaction`. O retry (até 5 tentativas, cada uma com novo `public_id`) está coberto por teste unitário, e a falha de todas as tentativas aborta o multipart.
+  - **Helper compartilhado:** `isPgUniqueViolationOnColumn` foi para `src/common/database/pg-errors.util.ts` (com spec). `ChannelsService` ainda tem uma cópia privada equivalente — migrá-la para o helper é refactor fora de escopo (sugestão para tarefa separada).
+  - **Propriedade em uma query só:** `findOwnedVideo` usa `where: { public_id, channel: { user_id } }`, então vídeo inexistente e vídeo de outro dono produzem o mesmo `VIDEO_NOT_FOUND`. O método e o `toResponse` (inclui `thumbnail_url` presignada quando há `thumbnail_key`) já ficaram prontos aqui porque `createVideo` os exige; SI-03.8 apenas os reutiliza em `getVideo`.
+  - Usuário sem canal em `createVideo` lança `Error` genérico (500) sem criar multipart: todo usuário ganha canal no cadastro, então a ausência é inconsistência de dados, não erro de domínio do catálogo.
+  - Compensação: se o `INSERT` falha, o multipart é abortado; se o próprio aborto falhar, o erro é logado e o erro **original** é relançado. Teste de integração confirma o aborto real (PUT numa URL daquele `upload_id` passa a responder `404`).
+  - Nomes dos DTOs de resposta: `VideoResponseDto`, `CreateVideoResponseDto`, `UploadPartUrlsResponseDto` (convenção `*Dto` do projeto; o plano os chama `VideoResponse`).
 
 ### SI-03.5 — Conclusão do upload e publicação do job na fila BullMQ
 - **Status:** pending
