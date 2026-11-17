@@ -222,7 +222,7 @@ green-field-ia-project/
 │   └── Dockerfile.dev
 ├── CLAUDE.md                            # Instruções para IA
 ├── FC Tube.fig                          # Design system do projeto (Figma)
-├── whiteboard.png                       # Quadro branco do projeto
+├── whiteboard.svg                       # Quadro branco do projeto
 └── README.md
 ```
 
