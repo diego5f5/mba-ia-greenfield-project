@@ -7,6 +7,9 @@ services:
       - 3000:3000
     volumes:
       - .:/home/node/app
+      # Keeps node_modules on the Docker VM's Linux filesystem: on Windows/macOS
+      # bind mounts, installs and the test suite are an order of magnitude slower.
+      - node_modules:/home/node/app/node_modules
     depends_on:
       db:
         condition: service_healthy
@@ -26,6 +29,8 @@ services:
     command: ["npm", "run", "start:worker:dev"]
     volumes:
       - .:/home/node/app
+      # Same volume as nestjs-api: one `npm install` serves both containers.
+      - node_modules:/home/node/app/node_modules
     depends_on:
       db:
         condition: service_healthy
@@ -105,3 +110,4 @@ services:
 volumes:
   minio-data:
   redis-data:
+  node_modules:

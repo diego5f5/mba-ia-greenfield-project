@@ -6,6 +6,11 @@ RUN apt update && apt install -y procps curl ffmpeg
 
 WORKDIR /home/node/app
 
+# node_modules is a named volume (compose.yaml). Creating the directory here as
+# `node` makes Docker initialize a new volume owned by `node`; otherwise it is
+# owned by root and `npm install` fails with EACCES.
+RUN mkdir -p /home/node/app/node_modules && chown -R node:node /home/node/app
+
 USER node
 
 CMD [ "tail", "-f", "/dev/null" ]

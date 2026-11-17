@@ -43,7 +43,7 @@ Services:
 - `video-worker` — NestJS application context without HTTP that consumes the `video-processing` queue (`npm run start:worker:dev`); builds into `dist-worker/` so it never touches the API's `dist/`
 - `mailpit` — local SMTP (`1025`) and web UI (`8025`)
 
-If your local `compose.override.yaml` mounts a `node_modules` volume on `nestjs-api`, mount the same volume on `video-worker`; otherwise the worker reads the host's bind-mounted `node_modules`, which is very slow on Windows.
+`node_modules` lives in the named volume `node_modules`, shared by `nestjs-api` and `video-worker` (declared in `compose.yaml`). Do not remove it: on Windows/macOS bind mounts `npm install` takes ~7 min and the test suite 20+ min (vs ~1 min and ~25 s with the volume), and slow runs make timing-sensitive tests fail. After changing `package.json` dependencies, run `npm install` in the container; to rebuild from scratch, `docker compose down -v` also drops the volume.
 
 All verification and teardown commands run on the **host machine**:
 
