@@ -1,7 +1,7 @@
 # phase-03-videos — Progress
 
-**Status:** in_progress
-**SIs:** 10/11 completed
+**Status:** completed
+**SIs:** 11/11 completed
 
 ### SI-03.1 — Infra: dependências, configuração de storage/fila e serviços MinIO/Redis no Compose
 - **Status:** completed
@@ -110,6 +110,10 @@
   - O e2e remove do MinIO os objetos de cada vídeo criado (`afterEach`), já que o `cleanAllTables` só limpa o banco.
 
 ### SI-03.11 — Contrato OpenAPI exportado e documentação de IA (CLAUDE.md) da fase de vídeos
-- **Status:** pending
-- **Tests:** —
-- **Observations:** none
+- **Status:** completed
+- **Tests:** 13 novos em `src/openapi-export.integration-spec.ts` (22 no arquivo); suíte unitária/integração 289 e e2e 66 (`--runInBand`), `tsc` e `lint` limpos
+- **Observations:**
+  - **`openapi.json` regenerado** com `npm run openapi:export` no container: só acréscimos (os 6 paths de `/videos`, nenhuma alteração nos paths de `auth`). O teste afirma, para cada operação, a tag `videos`, os códigos de resposta do contrato, o requisito `access-token`, `ApiErrorEnvelope` em todo erro e o header `Location` nos 302.
+  - **`nestjs-project/CLAUDE.md`:** serviços `minio`, `minio-init`, `redis`, `video-worker` e `mailpit` (que já existia no Compose e não estava listado); verificações de prontidão `mc ready local` (saída real: `The cluster 'local' is ready`), `redis-cli ping` e logs do worker, todas executadas e conferidas; nova seção "Videos, Storage & Queue" com módulos, endpoints, ciclo de vida, variáveis `S3_*`/`REDIS_*`, a regra de `S3_PUBLIC_ENDPOINT` e três armadilhas (e2e com `--runInBand`, worker consumindo vídeos de teste, regenerar o `openapi.json`).
+  - **`CLAUDE.md` da raiz e diagrama:** fila passa a "BullMQ on Redis", storage a "S3-compatible; MinIO locally", worker a processo NestJS separado com FFmpeg. Também corrigi o texto "uploads to storage" da API para "starts multipart uploads and signs storage URLs": os bytes vão do cliente direto ao storage, e o texto antigo contradizia o desenho da fase. No diagrama só mudei o rótulo do worker e a tecnologia da fila; o rótulo "Uploads" da relação API → storage ficou como estava (pendência de redação, não de comportamento).
+  - **Pendência anotada:** a observação sobre `compose.override.yaml` (volume `node_modules` também no `video-worker`) está no `CLAUDE.md`, mas o arquivo é local e não versionado; quem clonar precisa replicar.
