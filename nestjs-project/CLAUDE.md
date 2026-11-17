@@ -180,7 +180,7 @@ Video bytes never cross the API: the client uploads straight to the object stora
 **Environment variables:** `S3_ENDPOINT`, `S3_PUBLIC_ENDPOINT`, `S3_REGION`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_BUCKET`, `REDIS_HOST`, `REDIS_PORT` (see `.env.example`). Hosts are Compose service names (`minio`, `redis`) — the **only** non-Compose host is `S3_PUBLIC_ENDPOINT` (`http://localhost:9000`), used just to sign URLs handed to clients outside the Docker network. Tests that fetch presigned URLs from inside the container set `S3_PUBLIC_ENDPOINT = S3_ENDPOINT`.
 
 **Gotchas:**
-- Run the e2e suites with `npm run test:e2e -- --runInBand`; they share one database and fail when run in parallel.
+- The e2e suites share one database and fail when run in parallel; `npm run test:e2e` already passes `--runInBand`, so never run them through another Jest invocation without it.
 - With `video-worker` running, any video left in `processing` by a test is consumed and moved to `failed` (test bytes are not real video); tests must not assert the database `status` after completing an upload unless they control the worker.
 - `openapi.json` is generated: after changing a controller or DTO run `docker compose exec nestjs-api npm run openapi:export` and commit the result.
 
