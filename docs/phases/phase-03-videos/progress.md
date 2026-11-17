@@ -1,7 +1,7 @@
 # phase-03-videos — Progress
 
 **Status:** in_progress
-**SIs:** 2/11 completed
+**SIs:** 3/11 completed
 
 ### SI-03.1 — Infra: dependências, configuração de storage/fila e serviços MinIO/Redis no Compose
 - **Status:** completed
@@ -21,9 +21,14 @@
   - Teste de integração: `fetch` com corpo `Buffer` não compila com os tipos atuais de `BodyInit`; o corpo é convertido para `Uint8Array`.
 
 ### SI-03.3 — Entidade Video, migration CreateVideos e VideosModule
-- **Status:** pending
-- **Tests:** —
-- **Observations:** none
+- **Status:** completed
+- **Tests:** 88 passing em 15 suítes (novos: `video.entity.integration-spec.ts`, `videos.module.spec.ts`, `migrations.integration-spec.ts` estendido; regressão das 10 suítes existentes que listam entidades)
+- **Observations:**
+  - Migration gerada pela CLI (`1794920038153-CreateVideos.ts`) e aplicada; o SQL gerado confere com o Data Model do plano (enum, tabela, UNIQUE em `public_id`, índice e FK em `channel_id`). Passou por `prettier` como os demais arquivos do projeto.
+  - `file_size_bytes` é `bigint`; o `pg` devolve string, então a entidade usa um `ValueTransformer` para expor `number` (10 GiB cabe em `Number.MAX_SAFE_INTEGER`). Coberto por teste com 10 GiB.
+  - `VideosModule` (nesta SI) só importa `TypeOrmModule.forFeature([Video])` e já está no `AppModule`; providers/controller chegam nas SIs seguintes.
+  - Todas as listas `ALL_ENTITIES` dos testes existentes ganharam `Video`, porque `Channel` agora referencia `Video` (relação `@OneToMany`) e o TypeORM exige a entidade registrada em qualquer DataSource que carregue `Channel`.
+  - Um script meu de inserção de import quebrou 10 arquivos de teste (arquivos CRLF; a busca por `;\n` falhou e o import caiu no início da primeira linha). Detectado pelo subagent de testes, corrigido e revalidado (88 testes verdes) antes do commit — nada disso chegou ao histórico.
 
 ### SI-03.4 — Pré-cadastro do vídeo como rascunho e URLs pré-assinadas das partes
 - **Status:** pending
