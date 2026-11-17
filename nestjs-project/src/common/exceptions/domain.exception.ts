@@ -48,3 +48,43 @@ export class TokenReuseDetectedException extends DomainException {
     );
   }
 }
+
+/** Unknown `public_id` OR a video that belongs to another channel. */
+export class VideoNotFoundException extends DomainException {
+  constructor() {
+    super('VIDEO_NOT_FOUND', 404, 'Video not found');
+  }
+}
+
+export class UploadNotInProgressException extends DomainException {
+  constructor() {
+    super(
+      'UPLOAD_NOT_IN_PROGRESS',
+      409,
+      'Upload is not in progress for this video',
+    );
+  }
+}
+
+export class InvalidUploadPartsException extends DomainException {
+  constructor() {
+    super('INVALID_UPLOAD_PARTS', 400, 'Upload parts are invalid');
+  }
+}
+
+export class UploadSizeMismatchException extends DomainException {
+  constructor() {
+    super(
+      'UPLOAD_SIZE_MISMATCH',
+      422,
+      'Uploaded file size does not match the declared size',
+    );
+  }
+}
+
+/** Stream/download requested while the video is not `ready`. */
+export class VideoNotReadyException extends DomainException {
+  constructor() {
+    super('VIDEO_NOT_READY', 409, 'Video is not ready yet');
+  }
+}

@@ -1,6 +1,6 @@
 services:
   nestjs-api:
-    build: 
+    build:
       context: .
       dockerfile: Dockerfile.dev
     ports:
@@ -12,6 +12,27 @@ services:
         condition: service_healthy
       mailpit:
         condition: service_started
+      minio-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  # Video processing worker (phase-03-videos/TD-07): same code as the API, no
+  # HTTP. Builds into dist-worker so its watch/clean never touches the API's dist.
+  video-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    command: ["npm", "run", "start:worker:dev"]
+    volumes:
+      - .:/home/node/app
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
 
   db:
     image: postgres:17
@@ -33,4 +54,54 @@ services:
       - "1025:1025"
       - "8025:8025"
 
+  # S3-compatible object storage (phase-03-videos/TD-01..TD-03). The upstream
+  # minio/minio image is no longer published; Chainguard ships the same MinIO
+  # binary for free. Pinned by digest because only the `latest` tag is public.
+  minio:
+    image: cgr.dev/chainguard/minio@sha256:59953701f8f8d0de81aab456f0b0b6c0a1804119415559bf7ede79d944108879
+    command: ["server", "/data", "--console-address", ":9001"]
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY}
+      MC_HOST_local: http://${S3_ACCESS_KEY}:${S3_SECRET_KEY}@localhost:9000
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
+  # One-shot bucket provisioning (phase-03-videos/TD-03); idempotent.
+  minio-init:
+    image: cgr.dev/chainguard/minio@sha256:59953701f8f8d0de81aab456f0b0b6c0a1804119415559bf7ede79d944108879
+    entrypoint: ["sh", "-c"]
+    command: ["mc mb --ignore-existing local/$${S3_BUCKET}"]
+    environment:
+      MC_HOST_local: http://${S3_ACCESS_KEY}:${S3_SECRET_KEY}@minio:9000
+      S3_BUCKET: ${S3_BUCKET:-streamtube-videos}
+    depends_on:
+      minio:
+        condition: service_healthy
+    restart: "no"
+
+  # BullMQ backend (phase-03-videos/TD-04); AOF so queued jobs survive restarts.
+  redis:
+    image: redis:7.4.12-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  minio-data:
+  redis-data:

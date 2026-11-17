@@ -13,6 +13,9 @@ docker compose ps   # all services must show status "running"
 Then verify each infrastructure service is actually ready to accept connections — not just running:
 
 - **PostgreSQL:** `docker compose exec db pg_isready -U streamtube` — expect `accepting connections`
+- **MinIO:** `docker compose exec minio mc ready local` — expect `The cluster 'local' is ready`; the one-shot `minio-init` must show `Exited (0)` (it creates the bucket)
+- **Redis:** `docker compose exec redis redis-cli ping` — expect `PONG`
+- **Video worker:** `docker compose logs video-worker` — expect `WorkerModule dependencies initialized` and no errors (it is a background consumer, not the HTTP server, so it starts with the infrastructure)
 
 Only start the NestJS dev server (`npm run start:dev`) when the user **explicitly** asks to run the application — never as part of "start the environment".
 
@@ -34,6 +37,13 @@ docker compose exec nestjs-api npm run start:dev
 Services:
 - `nestjs-api` — NestJS API, port `3000`
 - `db` — PostgreSQL 17, port `5432`, database `streamtube`, user/password `streamtube`
+- `minio` — S3-compatible object storage, API on `9000`, console on `9001` (credentials from `S3_ACCESS_KEY`/`S3_SECRET_KEY`)
+- `minio-init` — one-shot job that creates the `S3_BUCKET` bucket (idempotent)
+- `redis` — Redis 7 with AOF, port `6379`; backs the BullMQ queue
+- `video-worker` — NestJS application context without HTTP that consumes the `video-processing` queue (`npm run start:worker:dev`); builds into `dist-worker/` so it never touches the API's `dist/`
+- `mailpit` — local SMTP (`1025`) and web UI (`8025`)
+
+If your local `compose.override.yaml` mounts a `node_modules` volume on `nestjs-api`, mount the same volume on `video-worker`; otherwise the worker reads the host's bind-mounted `node_modules`, which is very slow on Windows.
 
 All verification and teardown commands run on the **host machine**:
 
@@ -44,9 +54,14 @@ curl http://localhost:3000
 # Verify PostgreSQL is ready (runs inside the db container)
 docker compose exec db pg_isready -U streamtube
 
+# Verify MinIO and Redis are ready
+docker compose exec minio mc ready local
+docker compose exec redis redis-cli ping
+
 # Check container logs
 docker compose logs nestjs-api
 docker compose logs db
+docker compose logs video-worker
 
 # Tear down the entire environment
 docker compose down
@@ -148,6 +163,26 @@ NestJS with standard module structure. Source lives in `src/`, compiled output i
 
 - Each domain feature gets its own module (e.g., `UsersModule`, `VideosModule`) registered in `AppModule`
 - Controllers handle HTTP routing; Services hold business logic; both are scoped to their module
+
+## Videos, Storage & Queue
+
+Video bytes never cross the API: the client uploads straight to the object storage with presigned URLs and plays/downloads through redirects to presigned URLs. The API only keeps state and enqueues work.
+
+- `src/videos/` — `VideosModule`: `VideosController` (owner-only endpoints below), `VideosService` (all business rules), `Video` entity, DTOs, and `VideoProcessingProcessor` (the queue consumer; registered **only** in the worker, never in `VideosModule`)
+- `src/storage/` — `StorageModule`/`StorageService`: the single gateway to the S3-compatible storage (multipart upload, `HeadObject`, `PutObject`, presigned URLs)
+- `src/media/` — `MediaModule`/`MediaProbeService`: wraps the system `ffprobe`/`ffmpeg` binaries (metadata and thumbnail) through `execFile`, without a shell
+- `src/worker.ts` + `src/worker.module.ts` — entrypoint and root module of the video worker (`NestFactory.createApplicationContext`, no HTTP); runs as the `video-worker` Compose service
+
+**Endpoints** (all authenticated, owner-only; another user's video answers `404 VIDEO_NOT_FOUND`): `POST /videos`, `POST /videos/:public_id/upload/parts`, `POST /videos/:public_id/upload/completion` (202 on the first call, 200 on repeats), `GET /videos/:public_id`, `GET /videos/:public_id/stream` and `GET /videos/:public_id/download` (302 redirects; `409 VIDEO_NOT_READY` until the video is `ready`).
+
+**Lifecycle:** `draft → processing → ready | failed`. Completing the upload moves the video to `processing` and adds a `process-video` job (`jobId` = `videos.id`, 3 attempts, exponential backoff) to the BullMQ queue `video-processing`. The worker probes the file, uploads `videos/{id}/thumbnail.jpg` and sets `ready`; an unreadable file (`InvalidMediaError` → `UnrecoverableError`) or exhausted retries set `failed` with `processing_error`.
+
+**Environment variables:** `S3_ENDPOINT`, `S3_PUBLIC_ENDPOINT`, `S3_REGION`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_BUCKET`, `REDIS_HOST`, `REDIS_PORT` (see `.env.example`). Hosts are Compose service names (`minio`, `redis`) — the **only** non-Compose host is `S3_PUBLIC_ENDPOINT` (`http://localhost:9000`), used just to sign URLs handed to clients outside the Docker network. Tests that fetch presigned URLs from inside the container set `S3_PUBLIC_ENDPOINT = S3_ENDPOINT`.
+
+**Gotchas:**
+- The e2e suites share one database and fail when run in parallel; `npm run test:e2e` already passes `--runInBand`, so never run them through another Jest invocation without it.
+- With `video-worker` running, any video left in `processing` by a test is consumed and moved to `failed` (test bytes are not real video); tests must not assert the database `status` after completing an upload unless they control the worker.
+- `openapi.json` is generated: after changing a controller or DTO run `docker compose exec nestjs-api npm run openapi:export` and commit the result.
 
 ## Code Conventions
 

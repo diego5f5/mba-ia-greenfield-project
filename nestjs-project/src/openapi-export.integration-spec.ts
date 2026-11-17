@@ -128,4 +128,85 @@ describe('exportSpec (integration)', () => {
       }
     }
   });
+
+  describe('video endpoints', () => {
+    type Operation = {
+      tags?: string[];
+      responses: Record<string, Record<string, unknown>>;
+      security?: Array<Record<string, unknown>>;
+    };
+    const paths = (): Record<string, Record<string, Operation>> =>
+      document.paths as Record<string, Record<string, Operation>>;
+
+    // Contract of `### API Contracts` (phase-03-videos): path, method, and the
+    // response codes each operation must document.
+    const VIDEO_OPERATIONS = [
+      { path: '/videos', method: 'post', codes: ['201', '400', '401'] },
+      {
+        path: '/videos/{public_id}',
+        method: 'get',
+        codes: ['200', '401', '404'],
+      },
+      {
+        path: '/videos/{public_id}/upload/parts',
+        method: 'post',
+        codes: ['200', '400', '401', '404', '409'],
+      },
+      {
+        path: '/videos/{public_id}/upload/completion',
+        method: 'post',
+        codes: ['200', '202', '400', '401', '404', '422'],
+      },
+      {
+        path: '/videos/{public_id}/stream',
+        method: 'get',
+        codes: ['302', '401', '404', '409'],
+      },
+      {
+        path: '/videos/{public_id}/download',
+        method: 'get',
+        codes: ['302', '401', '404', '409'],
+      },
+    ];
+
+    it.each(VIDEO_OPERATIONS)(
+      '$method $path is under the videos tag with its documented responses',
+      ({ path, method, codes }) => {
+        const operation = paths()[path]?.[method];
+
+        expect(operation).toBeDefined();
+        expect(operation.tags).toContain('videos');
+        expect(Object.keys(operation.responses)).toEqual(
+          expect.arrayContaining(codes),
+        );
+      },
+    );
+
+    it.each(VIDEO_OPERATIONS)(
+      '$method $path requires the access-token and references ApiErrorEnvelope on errors',
+      ({ path, method, codes }) => {
+        const operation = paths()[path][method];
+
+        expect(operation.security?.some((r) => 'access-token' in r)).toBe(true);
+        for (const code of codes.filter((c) => Number(c) >= 400)) {
+          expect(JSON.stringify(operation.responses[code])).toContain(
+            '#/components/schemas/ApiErrorEnvelope',
+          );
+        }
+      },
+    );
+
+    it('documents the Location header of the stream and download redirects', () => {
+      for (const path of [
+        '/videos/{public_id}/stream',
+        '/videos/{public_id}/download',
+      ]) {
+        const headers = paths()[path].get.responses['302'].headers as Record<
+          string,
+          unknown
+        >;
+        expect(headers).toHaveProperty('Location');
+      }
+    });
+  });
 });
