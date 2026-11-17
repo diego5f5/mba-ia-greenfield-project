@@ -1,7 +1,7 @@
 # phase-03-videos — Progress
 
 **Status:** in_progress
-**SIs:** 1/11 completed
+**SIs:** 2/11 completed
 
 ### SI-03.1 — Infra: dependências, configuração de storage/fila e serviços MinIO/Redis no Compose
 - **Status:** completed
@@ -13,9 +13,12 @@
   - **Fora de escopo (pendência já anotada):** `.env.example` mantém `MAIL_FROM` sem aspas, o que quebra o parser do Compose para quem copia o arquivo; correção fica para uma tarefa separada.
 
 ### SI-03.2 — StorageModule: cliente S3 para MinIO com endpoints interno e público
-- **Status:** pending
-- **Tests:** —
-- **Observations:** none
+- **Status:** completed
+- **Tests:** 8 passing (`src/storage/storage.module.spec.ts`, `src/storage/storage.service.integration-spec.ts`)
+- **Observations:**
+  - `responseChecksumValidation: 'WHEN_REQUIRED'` também foi definido (além do `requestChecksumCalculation` pedido pelo TD-01) para que downloads parciais (`Range`) não disparem validação de checksum do objeto inteiro.
+  - `StorageService` implementa `OnModuleDestroy` para destruir os dois `S3Client` (evita sockets abertos segurando o Jest).
+  - Teste de integração: `fetch` com corpo `Buffer` não compila com os tipos atuais de `BodyInit`; o corpo é convertido para `Uint8Array`.
 
 ### SI-03.3 — Entidade Video, migration CreateVideos e VideosModule
 - **Status:** pending
