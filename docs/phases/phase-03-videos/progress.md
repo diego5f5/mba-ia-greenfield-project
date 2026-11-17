@@ -1,7 +1,7 @@
 # phase-03-videos — Progress
 
 **Status:** in_progress
-**SIs:** 5/11 completed
+**SIs:** 6/11 completed
 
 ### SI-03.1 — Infra: dependências, configuração de storage/fila e serviços MinIO/Redis no Compose
 - **Status:** completed
@@ -54,9 +54,14 @@
   - `VIDEO_PROCESSING_QUEUE_JOB_OPTIONS` (`attempts: 3`, backoff exponencial de 5000 ms, sem `removeOnComplete`/`removeOnFail`) fica em `videos.constants.ts` e é conferido por `videos.module.spec.ts` via `queue.defaultJobOptions`.
 
 ### SI-03.6 — MediaProbeService: extração de metadados e thumbnail com ffprobe/ffmpeg
-- **Status:** pending
-- **Tests:** —
-- **Observations:** none
+- **Status:** completed
+- **Tests:** 15 passing (`src/media/media-probe.service.spec.ts`, `src/media/media-probe.service.integration-spec.ts`); suíte completa 232 + 52 e2e, `tsc` e `lint` limpos
+- **Observations:**
+  - **Erro de infraestrutura × mídia inválida:** só o código de saída numérico do `ffprobe` (≠ 0) vira `InvalidMediaError`. `ENOENT` (binário ausente) e timeout propagam como erro comum, para o worker (SI-03.7) poder tentar de novo em vez de marcar o vídeo como inválido.
+  - **Sem vazar a URL pré-assinada:** a mensagem do `InvalidMediaError` não inclui o stderr do `ffprobe` (pode conter a URL assinada) porque o worker a persistirá em `processing_error`.
+  - **Thumbnail:** a pasta temporária vem de `mkdtemp` em `os.tmpdir()` e é removida com `rm -r` em `finally`; o offset é formatado com 3 casas (`5.000`). Vídeos menores que 1280px são ampliados (`scale=1280:-2`), como o plano pede.
+  - `MediaProbeService` não depende do `StorageService`: recebe só a URL. O teste de integração sobe a fixture no MinIO e passa uma URL interna pré-assinada.
+  - `src/test/video-fixture.ts` usa `-movflags +faststart` para o `ffprobe` ler o MP4 por poucos range requests.
 
 ### SI-03.7 — Worker de vídeo: processor BullMQ, entrypoint próprio e serviço video-worker no Compose
 - **Status:** pending
