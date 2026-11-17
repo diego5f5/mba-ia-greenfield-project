@@ -1,7 +1,7 @@
 # phase-03-videos — Progress
 
 **Status:** in_progress
-**SIs:** 7/11 completed
+**SIs:** 8/11 completed
 
 ### SI-03.1 — Infra: dependências, configuração de storage/fila e serviços MinIO/Redis no Compose
 - **Status:** completed
@@ -78,9 +78,15 @@
   - Os testes de integração das SIs anteriores criam vídeos em `processing` com bytes que não são vídeo; com o `video-worker` no ar eles passam a `failed` (esperado, e esses testes não afirmam `status`).
 
 ### SI-03.8 — Consulta do vídeo e URLs de streaming e download
-- **Status:** pending
-- **Tests:** —
-- **Observations:** none
+- **Status:** completed
+- **Tests:** 27 novos (`videos.service.spec`, `videos.service.integration-spec`, `content-disposition.util.spec`); suíte completa 276 + 52 e2e, `tsc` e `lint` limpos
+- **Observations:**
+  - **Já existia da SI-03.4:** `findOwnedVideo` e o mapeamento `toResponse` (com `thumbnail_url`) foram entregues lá porque `createVideo` os exige, então esta SI só acrescentou `getVideo`, `getStreamUrl`, `getDownloadUrl` e o helper privado `findReadyOwnedVideo`, que concentra a regra "dono + `ready`".
+  - **Ordem das verificações:** a propriedade é checada antes do status, então um não-dono recebe `VIDEO_NOT_FOUND` mesmo para vídeo em `processing`, sem revelar o estado de vídeos alheios.
+  - **`Content-Disposition` em `content-disposition.util.ts`:** extraído do service para ter teste próprio. Além do pedido no plano (fallback ASCII para não imprimíveis e aspas), o fallback também troca a barra invertida, e o `filename*` codifica `' ( ) *`, que o `encodeURIComponent` deixa passar mas a RFC 5987 não aceita. CR/LF viram `_` no fallback e `%0D%0A` no `filename*` (testado contra injeção de cabeçalho).
+  - **`VideoNotReadyException`** (`VIDEO_NOT_READY`, 409) adicionada em `domain.exception.ts`.
+  - **Integração:** os vídeos `ready` são semeados direto no banco com objetos reais no MinIO (sem passar pelo worker). Verificado: stream com `Range: bytes=0-1023` → 206, 1024 bytes, `Content-Range` e `Content-Type` do vídeo; download → 200 com `attachment` e o nome acentuado em `filename*`; thumbnail → 200 `image/jpeg`; as três URLs usam o host de `S3_PUBLIC_ENDPOINT` e `X-Amz-Expires=3600`.
+  - Nenhum vídeo semeado entra na fila, então o `video-worker` no ar não interfere.
 
 ### SI-03.9 — Endpoints de upload: POST /videos, POST /videos/{public_id}/upload/parts e POST /videos/{public_id}/upload/completion
 - **Status:** pending

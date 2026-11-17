@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { BullModule, getQueueToken } from '@nestjs/bullmq';
 import { ConfigModule, ConfigType } from '@nestjs/config';
 import { Test, TestingModule } from '@nestjs/testing';
@@ -12,6 +13,7 @@ import {
   UploadNotInProgressException,
   UploadSizeMismatchException,
   VideoNotFoundException,
+  VideoNotReadyException,
 } from '../common/exceptions/domain.exception';
 import databaseConfig from '../config/database.config';
 import queueConfig from '../config/queue.config';
@@ -21,6 +23,7 @@ import { cleanAllTables } from '../test/create-test-data-source';
 import { User } from '../users/entities/user.entity';
 import { CreateVideoDto } from './dto/create-video.dto';
 import { Video, VideoStatus } from './entities/video.entity';
+import { generatePublicId } from './public-id.util';
 import { VIDEO_PROCESSING_QUEUE } from './videos.constants';
 import { VideosModule } from './videos.module';
 import { VideosService } from './videos.service';
@@ -417,6 +420,162 @@ describe('VideosService — upload start (integration, Postgres + MinIO)', () =>
 
       expect((await storedVideo(publicId)).status).toBe(VideoStatus.DRAFT);
       await abortUpload(publicId);
+    });
+  });
+
+  describe('getVideo / getStreamUrl / getDownloadUrl', () => {
+    const SOURCE_BYTES = 4096;
+    const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
+    const seededKeys: string[] = [];
+
+    afterAll(async () => {
+      for (const key of seededKeys) {
+        await storage.deleteObject(key);
+      }
+    });
+
+    /** Seeds a video straight into the DB with real objects in MinIO. */
+    async function seedVideo(
+      user: User,
+      overrides: Partial<Video> = {},
+      withObjects = true,
+    ): Promise<Video> {
+      const channel = await channelRepository.findOneByOrFail({
+        user_id: user.id,
+      });
+      const id = randomUUID();
+      const sourceKey = `videos/${id}/source`;
+      const thumbnailKey = `videos/${id}/thumbnail.jpg`;
+      if (withObjects) {
+        seededKeys.push(sourceKey, thumbnailKey);
+        await storage.putObject(
+          sourceKey,
+          Buffer.alloc(SOURCE_BYTES, 1),
+          'application/octet-stream',
+        );
+        await storage.putObject(thumbnailKey, JPEG, 'image/jpeg');
+      }
+      return videoRepository.save(
+        videoRepository.create({
+          id,
+          public_id: generatePublicId(),
+          channel_id: channel.id,
+          title: 'aula',
+          status: VideoStatus.READY,
+          original_file_name: 'Introdução ao Nest.mp4',
+          content_type: 'video/mp4',
+          file_size_bytes: SOURCE_BYTES,
+          source_key: sourceKey,
+          thumbnail_key: thumbnailKey,
+          duration_seconds: 3,
+          ...overrides,
+        }),
+      );
+    }
+
+    it('returns a thumbnail URL that serves the JPEG from the public endpoint', async () => {
+      const user = await createUserWithChannel();
+      const video = await seedVideo(user);
+
+      const result = await service.getVideo(user.id, video.public_id);
+
+      const response = await fetch(result.thumbnail_url!);
+      expect(response.status).toBe(200);
+      expect(response.headers.get('content-type')).toBe('image/jpeg');
+      await response.arrayBuffer();
+    });
+
+    it('returns thumbnail_url null for a draft', async () => {
+      const user = await createUserWithChannel();
+      const video = await seedVideo(
+        user,
+        { status: VideoStatus.DRAFT, thumbnail_key: null },
+        false,
+      );
+
+      const result = await service.getVideo(user.id, video.public_id);
+
+      expect(result.thumbnail_url).toBeNull();
+    });
+
+    it('streams with Range: 206, 1024 bytes and the video content type', async () => {
+      const user = await createUserWithChannel();
+      const video = await seedVideo(user);
+
+      const url = await service.getStreamUrl(user.id, video.public_id);
+      const response = await fetch(url, { headers: { Range: 'bytes=0-1023' } });
+
+      expect(response.status).toBe(206);
+      expect(response.headers.get('content-type')).toBe('video/mp4');
+      expect(response.headers.get('content-range')).toBe(
+        `bytes 0-1023/${SOURCE_BYTES}`,
+      );
+      expect((await response.arrayBuffer()).byteLength).toBe(1024);
+    });
+
+    it('downloads as an attachment keeping the original accented name', async () => {
+      const user = await createUserWithChannel();
+      const video = await seedVideo(user);
+
+      const url = await service.getDownloadUrl(user.id, video.public_id);
+      const response = await fetch(url);
+
+      expect(response.status).toBe(200);
+      const disposition = response.headers.get('content-disposition')!;
+      expect(disposition).toContain('attachment');
+      expect(disposition).toContain(
+        `filename*=UTF-8''Introdu%C3%A7%C3%A3o%20ao%20Nest.mp4`,
+      );
+      await response.arrayBuffer();
+    });
+
+    it('signs stream, download and thumbnail URLs for 3600 s on the public host', async () => {
+      const user = await createUserWithChannel();
+      const video = await seedVideo(user);
+      const publicHost = new URL(process.env.S3_PUBLIC_ENDPOINT!).host;
+
+      const urls = [
+        await service.getStreamUrl(user.id, video.public_id),
+        await service.getDownloadUrl(user.id, video.public_id),
+        (await service.getVideo(user.id, video.public_id)).thumbnail_url!,
+      ];
+
+      for (const url of urls) {
+        const parsed = new URL(url);
+        expect(parsed.host).toBe(publicHost);
+        expect(parsed.searchParams.get('X-Amz-Expires')).toBe('3600');
+      }
+    });
+
+    it.each([VideoStatus.PROCESSING, VideoStatus.DRAFT, VideoStatus.FAILED])(
+      'refuses stream and download of a %s video with VIDEO_NOT_READY',
+      async (status) => {
+        const user = await createUserWithChannel();
+        const video = await seedVideo(user, { status }, false);
+
+        await expect(
+          service.getStreamUrl(user.id, video.public_id),
+        ).rejects.toBeInstanceOf(VideoNotReadyException);
+        await expect(
+          service.getDownloadUrl(user.id, video.public_id),
+        ).rejects.toBeInstanceOf(VideoNotReadyException);
+      },
+    );
+
+    it('answers VIDEO_NOT_FOUND to a user who does not own the video', async () => {
+      const owner = await createUserWithChannel();
+      const other = await createUserWithChannel();
+      const video = await seedVideo(owner);
+
+      await expect(
+        service.getVideo(other.id, video.public_id),
+      ).rejects.toBeInstanceOf(VideoNotFoundException);
+      await expect(
+        service.getStreamUrl(other.id, video.public_id),
+      ).rejects.toBeInstanceOf(VideoNotFoundException);
+      await expect(
+        service.getDownloadUrl(other.id, video.public_id),
+      ).rejects.toBeInstanceOf(VideoNotFoundException);
     });
   });
 });

@@ -81,3 +81,10 @@ export class UploadSizeMismatchException extends DomainException {
     );
   }
 }
+
+/** Stream/download requested while the video is not `ready`. */
+export class VideoNotReadyException extends DomainException {
+  constructor() {
+    super('VIDEO_NOT_READY', 409, 'Video is not ready yet');
+  }
+}

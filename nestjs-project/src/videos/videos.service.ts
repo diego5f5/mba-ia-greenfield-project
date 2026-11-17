@@ -11,6 +11,7 @@ import {
   UploadNotInProgressException,
   UploadSizeMismatchException,
   VideoNotFoundException,
+  VideoNotReadyException,
 } from '../common/exceptions/domain.exception';
 import { MultipartUploadRejectedError } from '../storage/storage.errors';
 import { StorageService } from '../storage/storage.service';
@@ -18,6 +19,7 @@ import { CompletedPartDto } from './dto/complete-upload.dto';
 import { CreateVideoResponseDto } from './dto/create-video-response.dto';
 import { CreateVideoDto } from './dto/create-video.dto';
 import { UploadPartUrlsResponseDto } from './dto/upload-part-urls-response.dto';
+import { buildAttachmentDisposition } from './content-disposition.util';
 import { VideoResponseDto } from './dto/video-response.dto';
 import { Video, VideoStatus } from './entities/video.entity';
 import { generatePublicId } from './public-id.util';
@@ -264,6 +266,46 @@ export class VideosService {
       );
       throw error;
     }
+  }
+
+  async getVideo(userId: string, publicId: string): Promise<VideoResponseDto> {
+    return this.toResponse(await this.findOwnedVideo(userId, publicId));
+  }
+
+  /**
+   * Presigned URL the player can `GET` with `Range` requests (206); the
+   * storage serves the bytes, never the API (phase-03-videos/TD-10).
+   */
+  async getStreamUrl(userId: string, publicId: string): Promise<string> {
+    const video = await this.findReadyOwnedVideo(userId, publicId);
+    return this.storageService.presignGetObject(video.source_key, {
+      expiresIn: VIDEO_URL_TTL_SECONDS,
+      endpoint: 'public',
+      responseContentType: video.content_type,
+    });
+  }
+
+  /** Presigned URL that makes the browser save the file with its original name. */
+  async getDownloadUrl(userId: string, publicId: string): Promise<string> {
+    const video = await this.findReadyOwnedVideo(userId, publicId);
+    return this.storageService.presignGetObject(video.source_key, {
+      expiresIn: VIDEO_URL_TTL_SECONDS,
+      endpoint: 'public',
+      responseContentDisposition: buildAttachmentDisposition(
+        video.original_file_name,
+      ),
+    });
+  }
+
+  private async findReadyOwnedVideo(
+    userId: string,
+    publicId: string,
+  ): Promise<Video> {
+    const video = await this.findOwnedVideo(userId, publicId);
+    if (video.status !== VideoStatus.READY) {
+      throw new VideoNotReadyException();
+    }
+    return video;
   }
 
   /**

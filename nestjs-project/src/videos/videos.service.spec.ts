@@ -9,6 +9,7 @@ import {
   UploadNotInProgressException,
   UploadSizeMismatchException,
   VideoNotFoundException,
+  VideoNotReadyException,
 } from '../common/exceptions/domain.exception';
 import { MultipartUploadRejectedError } from '../storage/storage.errors';
 import { StorageService } from '../storage/storage.service';
@@ -514,6 +515,115 @@ describe('VideosService', () => {
           status: VideoStatus.FAILED,
           processing_error: 'ENQUEUE_FAILED: redis unreachable',
         }),
+      );
+    });
+  });
+
+  describe('getVideo', () => {
+    it('returns the owner video with a presigned public thumbnail URL', async () => {
+      videoRepository.findOne.mockResolvedValue(
+        savedVideo({
+          status: VideoStatus.READY,
+          thumbnail_key: 'videos/video-1/thumbnail.jpg',
+        }),
+      );
+      storage.presignGetObject.mockResolvedValue('https://public/thumb');
+
+      const result = await service.getVideo(USER_ID, 'AbCdEfGhIjK');
+
+      expect(result.thumbnail_url).toBe('https://public/thumb');
+      expect(storage.presignGetObject).toHaveBeenCalledWith(
+        'videos/video-1/thumbnail.jpg',
+        { expiresIn: 3600, endpoint: 'public' },
+      );
+      expect(videoRepository.findOne).toHaveBeenCalledWith({
+        where: { public_id: 'AbCdEfGhIjK', channel: { user_id: USER_ID } },
+      });
+    });
+
+    it('returns thumbnail_url null when there is no thumbnail yet', async () => {
+      videoRepository.findOne.mockResolvedValue(savedVideo());
+
+      const result = await service.getVideo(USER_ID, 'AbCdEfGhIjK');
+
+      expect(result.thumbnail_url).toBeNull();
+      expect(storage.presignGetObject).not.toHaveBeenCalled();
+    });
+
+    it('throws VIDEO_NOT_FOUND for an unknown video or one owned by someone else', async () => {
+      videoRepository.findOne.mockResolvedValue(null);
+
+      await expect(
+        service.getVideo('other-user', 'AbCdEfGhIjK'),
+      ).rejects.toBeInstanceOf(VideoNotFoundException);
+    });
+  });
+
+  describe.each(['getStreamUrl', 'getDownloadUrl'] as const)('%s', (method) => {
+    it.each([VideoStatus.DRAFT, VideoStatus.PROCESSING, VideoStatus.FAILED])(
+      'throws VIDEO_NOT_READY for a %s video',
+      async (status) => {
+        videoRepository.findOne.mockResolvedValue(savedVideo({ status }));
+
+        await expect(
+          service[method](USER_ID, 'AbCdEfGhIjK'),
+        ).rejects.toBeInstanceOf(VideoNotReadyException);
+        expect(storage.presignGetObject).not.toHaveBeenCalled();
+      },
+    );
+
+    it('throws VIDEO_NOT_FOUND for a video owned by someone else', async () => {
+      videoRepository.findOne.mockResolvedValue(null);
+
+      await expect(
+        service[method]('other-user', 'AbCdEfGhIjK'),
+      ).rejects.toBeInstanceOf(VideoNotFoundException);
+    });
+  });
+
+  describe('getStreamUrl', () => {
+    it('presigns the source object on the public endpoint with the video content type', async () => {
+      videoRepository.findOne.mockResolvedValue(
+        savedVideo({ status: VideoStatus.READY, content_type: 'video/webm' }),
+      );
+      storage.presignGetObject.mockResolvedValue('https://public/stream');
+
+      await expect(service.getStreamUrl(USER_ID, 'AbCdEfGhIjK')).resolves.toBe(
+        'https://public/stream',
+      );
+
+      expect(storage.presignGetObject).toHaveBeenCalledWith(
+        'videos/video-1/source',
+        {
+          expiresIn: 3600,
+          endpoint: 'public',
+          responseContentType: 'video/webm',
+        },
+      );
+    });
+  });
+
+  describe('getDownloadUrl', () => {
+    it('forces a download with an ASCII fallback and the UTF-8 original name', async () => {
+      videoRepository.findOne.mockResolvedValue(
+        savedVideo({
+          status: VideoStatus.READY,
+          original_file_name: 'Introdução.mp4',
+        }),
+      );
+      storage.presignGetObject.mockResolvedValue('https://public/download');
+
+      await expect(
+        service.getDownloadUrl(USER_ID, 'AbCdEfGhIjK'),
+      ).resolves.toBe('https://public/download');
+
+      expect(storage.presignGetObject).toHaveBeenCalledWith(
+        'videos/video-1/source',
+        {
+          expiresIn: 3600,
+          endpoint: 'public',
+          responseContentDisposition: `attachment; filename="Introdu__o.mp4"; filename*=UTF-8''Introdu%C3%A7%C3%A3o.mp4`,
+        },
       );
     });
   });
