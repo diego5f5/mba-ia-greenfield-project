@@ -1,7 +1,7 @@
 # phase-03-videos — Progress
 
 **Status:** in_progress
-**SIs:** 9/11 completed
+**SIs:** 10/11 completed
 
 ### SI-03.1 — Infra: dependências, configuração de storage/fila e serviços MinIO/Redis no Compose
 - **Status:** completed
@@ -100,9 +100,14 @@
   - Com o `video-worker` no ar, o job criado pelo e2e é consumido e o vídeo (bytes que não são vídeo) vira `failed`; o teste só afirma o job na fila (que permanece, pois não há `removeOnComplete`) e a resposta HTTP.
 
 ### SI-03.10 — Endpoints de consulta, streaming e download: GET /videos/{public_id}, /stream e /download
-- **Status:** pending
-- **Tests:** —
-- **Observations:** none
+- **Status:** completed
+- **Tests:** 6 e2e (`test/videos-delivery.e2e-spec.ts`, escrito a partir de `specs/videos-delivery.plan.md`); suíte unitária/integração 276 e e2e 66 (5 suítes, com `--runInBand`), `tsc` e `lint` limpos
+- **Observations:**
+  - **Redirecionamento dinâmico:** `stream` e `download` usam `@Redirect()` e devolvem `{ url, statusCode: 302 }`; o `Location` é a URL pré-assinada do `VideosService`. Os três handlers só delegam ao service. A resposta 302 está documentada com o header `Location` e os erros 401/404/409 com `ApiErrorEnvelope`.
+  - **Fluxo completo verificado de ponta a ponta:** o e2e sobe a API e um contexto do `WorkerModule` no próprio teste (mesmo código do `video-worker`), envia a fixture MP4 pelas URLs de parte direto ao MinIO, conclui o upload e espera o vídeo ficar `ready` (~1 s). Confirmado: duração ≈ 3 s, 320x240 `h264`, thumbnail `image/jpeg`; o `Location` do stream responde 206 a `Range: bytes=0-1023` com `Content-Range` e `video/mp4`; o do download responde 200 com o arquivo inteiro e `attachment` com `filename*=UTF-8''aula%20de%20v%C3%ADdeo.mp4`.
+  - **Dois consumidores na mesma fila:** com o serviço `video-worker` do Compose no ar, o worker do teste e o do Compose disputam o job; o resultado é o mesmo porque o processor é idempotente (só age em `processing` e os updates são condicionais).
+  - **Mesma resposta para não-dono e id inexistente:** as três rotas devolvem `404 VIDEO_NOT_FOUND` sem header `Location`.
+  - O e2e remove do MinIO os objetos de cada vídeo criado (`afterEach`), já que o `cleanAllTables` só limpa o banco.
 
 ### SI-03.11 — Contrato OpenAPI exportado e documentação de IA (CLAUDE.md) da fase de vídeos
 - **Status:** pending

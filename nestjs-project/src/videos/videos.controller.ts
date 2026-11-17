@@ -1,10 +1,12 @@
 import {
   Body,
   Controller,
+  Get,
   HttpCode,
   HttpStatus,
   Param,
   Post,
+  Redirect,
   Res,
 } from '@nestjs/common';
 import {
@@ -26,6 +28,18 @@ import { RequestUploadPartsDto } from './dto/request-upload-parts.dto';
 import { UploadPartUrlsResponseDto } from './dto/upload-part-urls-response.dto';
 import { VideoResponseDto } from './dto/video-response.dto';
 import { VideosService } from './videos.service';
+
+interface RedirectResult {
+  url: string;
+  statusCode: number;
+}
+
+const LOCATION_HEADER_DOC = {
+  Location: {
+    description: 'Presigned storage URL (valid for 3600 s)',
+    schema: { type: 'string', format: 'uri' },
+  },
+} as const;
 
 const PUBLIC_ID_PARAM = {
   name: 'public_id',
@@ -171,5 +185,110 @@ export class VideosController {
     // Transport decision only: 202 for the call that started the processing.
     response.status(transitioned ? HttpStatus.ACCEPTED : HttpStatus.OK);
     return video;
+  }
+
+  @Get(':public_id')
+  @HttpCode(HttpStatus.OK)
+  @ApiParam(PUBLIC_ID_PARAM)
+  @ApiOperation({
+    summary: 'Get a video',
+    description:
+      'Returns the video and its processing state, so the uploader can follow `draft → processing → ready | failed`.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'The video',
+    type: VideoResponseDto,
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'Missing or invalid access token',
+    schema: { $ref: getSchemaPath(ApiErrorEnvelope) },
+  })
+  @ApiResponse({
+    status: 404,
+    description:
+      'Video not found or not owned by the caller (`VIDEO_NOT_FOUND`)',
+    schema: { $ref: getSchemaPath(ApiErrorEnvelope) },
+  })
+  async getVideo(
+    @CurrentUser() user: JwtPayload,
+    @Param('public_id') publicId: string,
+  ): Promise<VideoResponseDto> {
+    return this.videosService.getVideo(user.sub, publicId);
+  }
+
+  @Get(':public_id/stream')
+  @Redirect()
+  @ApiParam(PUBLIC_ID_PARAM)
+  @ApiOperation({
+    summary: 'Stream a video',
+    description:
+      'Redirects to a presigned storage URL of the video. The storage answers `Range` requests with `206 Partial Content`, so playback never needs the whole file.',
+  })
+  @ApiResponse({
+    status: 302,
+    description: 'Redirect to the presigned stream URL',
+    headers: LOCATION_HEADER_DOC,
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'Missing or invalid access token',
+    schema: { $ref: getSchemaPath(ApiErrorEnvelope) },
+  })
+  @ApiResponse({
+    status: 404,
+    description:
+      'Video not found or not owned by the caller (`VIDEO_NOT_FOUND`)',
+    schema: { $ref: getSchemaPath(ApiErrorEnvelope) },
+  })
+  @ApiResponse({
+    status: 409,
+    description: 'The video is not ready yet (`VIDEO_NOT_READY`)',
+    schema: { $ref: getSchemaPath(ApiErrorEnvelope) },
+  })
+  async streamVideo(
+    @CurrentUser() user: JwtPayload,
+    @Param('public_id') publicId: string,
+  ): Promise<RedirectResult> {
+    const url = await this.videosService.getStreamUrl(user.sub, publicId);
+    return { url, statusCode: HttpStatus.FOUND };
+  }
+
+  @Get(':public_id/download')
+  @Redirect()
+  @ApiParam(PUBLIC_ID_PARAM)
+  @ApiOperation({
+    summary: 'Download a video',
+    description:
+      'Redirects to a presigned storage URL that makes the browser save the original file with its original name.',
+  })
+  @ApiResponse({
+    status: 302,
+    description: 'Redirect to the presigned download URL',
+    headers: LOCATION_HEADER_DOC,
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'Missing or invalid access token',
+    schema: { $ref: getSchemaPath(ApiErrorEnvelope) },
+  })
+  @ApiResponse({
+    status: 404,
+    description:
+      'Video not found or not owned by the caller (`VIDEO_NOT_FOUND`)',
+    schema: { $ref: getSchemaPath(ApiErrorEnvelope) },
+  })
+  @ApiResponse({
+    status: 409,
+    description: 'The video is not ready yet (`VIDEO_NOT_READY`)',
+    schema: { $ref: getSchemaPath(ApiErrorEnvelope) },
+  })
+  async downloadVideo(
+    @CurrentUser() user: JwtPayload,
+    @Param('public_id') publicId: string,
+  ): Promise<RedirectResult> {
+    const url = await this.videosService.getDownloadUrl(user.sub, publicId);
+    return { url, statusCode: HttpStatus.FOUND };
   }
 }
