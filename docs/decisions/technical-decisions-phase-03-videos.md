@@ -1,7 +1,7 @@
 ---
 scope_type: phase
 related_phases: [3]
-status: pending
+status: decided
 date: 2026-11-17
 scope_description: "Backend foundation for video upload and processing: object storage usage (client, endpoints, bucket layout), processing queue technology, 10GB direct-to-storage upload protocol, draft pre-registration and upload completion signal, video worker runtime, FFmpeg-based metadata/thumbnail extraction, unique public video identifier, streaming/download delivery, and the video status lifecycle with failure handling."
 ---
@@ -44,7 +44,8 @@ Object storage itself is **not** an open choice: `docs/diagrams/software-arch.me
 
 **Recommendation:** **Option A (AWS SDK v3)** — the production target is S3 and the dev target is MinIO; the official SDK is the only option where both are first-class and every operation of the upload flow (TD-05) can be presigned with the same API. The checksum default must be set to `WHEN_REQUIRED` on the client used for presigning.
 
-**Decision:** _[pending]_
+**Decision:** A (AWS SDK v3: @aws-sdk/client-s3 + @aws-sdk/s3-request-presigner)
+**Libraries:** @aws-sdk/client-s3, @aws-sdk/s3-request-presigner
 
 ---
 
@@ -75,7 +76,7 @@ Object storage itself is **not** an open choice: `docs/diagrams/software-arch.me
 
 **Recommendation:** **Option A (internal + public endpoints)** — it is the only option that keeps service-to-service traffic on Compose service names while still issuing URLs the client can reach, with zero extra infrastructure. Env keys: `S3_ENDPOINT`, `S3_PUBLIC_ENDPOINT`, `S3_REGION`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_BUCKET`, validated by the existing Joi schema (Phase 01 TD-02).
 
-**Decision:** _[pending]_
+**Decision:** A (Internal endpoint for calls + public endpoint for client-facing signing)
 
 ---
 
@@ -106,7 +107,7 @@ Object storage itself is **not** an open choice: `docs/diagrams/software-arch.me
 
 **Recommendation:** **Option A (single private bucket, `videos/{videoId}/…`)** — it keeps every asset behind the API's authorization decision (needed for drafts now and unlisted videos in Phase 04) with a single provisioning step. The bucket is created by a one-shot `minio/mc` init service in `compose.yaml` (`mc mb --ignore-existing`). Incomplete multipart uploads are reclaimed by MinIO's stale-upload expiry (`api stale_uploads_expiry`, default 24h); on AWS S3 the equivalent is an `AbortIncompleteMultipartUpload` lifecycle rule.
 
-**Decision:** _[pending]_
+**Decision:** A (Single private bucket, per-video prefix)
 
 ---
 
@@ -137,7 +138,8 @@ Object storage itself is **not** an open choice: `docs/diagrams/software-arch.me
 
 **Recommendation:** **Option A (BullMQ + Redis)** — it is the only option with an official NestJS integration that also provides job-queue semantics (attempts, backoff, unrecoverable errors, idempotent `jobId`) out of the box, which TD-11's failure policy depends on; Redis is a lightweight container that matches the separate "Message Queue" node of the architecture. Use `jobId = videoId` so a repeated completion never enqueues duplicate work. Env keys: `REDIS_HOST`, `REDIS_PORT`.
 
-**Decision:** _[pending]_
+**Decision:** A (BullMQ on Redis via @nestjs/bullmq)
+**Libraries:** bullmq, @nestjs/bullmq
 
 ---
 
@@ -173,7 +175,7 @@ Object storage itself is **not** an open choice: `docs/diagrams/software-arch.me
 
 **Recommendation:** **Option A (presigned S3 multipart, direct to storage)** — it is the only option where the API never touches the video bytes and that supports 10GB natively on both MinIO and S3. Parameters: maximum size **10 GiB** (10 × 1024³ bytes) declared at initiation and verified at completion (`HeadObject`); server-defined part size **64 MiB** (≤ 160 parts for 10 GiB, well inside the 10,000-part limit and above the 5 MiB minimum); declared content type restricted to `video/*`; part URLs issued on demand with a bounded TTL.
 
-**Decision:** _[pending]_
+**Decision:** A (Direct-to-storage S3 multipart upload with presigned part URLs)
 
 ---
 
@@ -204,7 +206,7 @@ Object storage itself is **not** an open choice: `docs/diagrams/software-arch.me
 
 **Recommendation:** **Option A (pre-register on initiation + explicit completion endpoint)** — it keeps validation, ownership and the status machine (TD-11) inside the API, works identically on MinIO and S3, and is directly testable with the Compose stack; the abandoned-upload case is already bounded by storage-side expiry (TD-03).
 
-**Decision:** _[pending]_
+**Decision:** A (Pre-register on initiation + explicit completion endpoint)
 
 ---
 
@@ -235,7 +237,7 @@ Object storage itself is **not** an open choice: `docs/diagrams/software-arch.me
 
 **Recommendation:** **Option A (same codebase, separate entrypoint/service)** — it delivers the process isolation the architecture requires while reusing every existing module and keeping one toolchain for tests, `tsc` and lint.
 
-**Decision:** _[pending]_
+**Decision:** A (Same codebase, separate entrypoint and Compose service)
 
 ---
 
@@ -266,7 +268,7 @@ Object storage itself is **not** an open choice: `docs/diagrams/software-arch.me
 
 **Recommendation:** **Option A (system FFmpeg via `execFile`, input from presigned internal URL)** — no unmaintained wrapper, no 10GB copy, and the parsed `ffprobe` JSON is fully typed under the project's strict TS rules. Policy: thumbnail frame at 10% of the duration (avoids black opening frames; `0s` when duration is unknown), JPEG scaled to 1280px width; persisted metadata = duration (seconds), width, height, video codec, audio codec, container format, bitrate, size.
 
-**Decision:** _[pending]_
+**Decision:** A (System ffprobe/ffmpeg via execFile, input from presigned internal URL)
 
 ---
 
@@ -302,7 +304,7 @@ Object storage itself is **not** an open choice: `docs/diagrams/software-arch.me
 
 **Recommendation:** **Option B (crypto short id, unique column + retry)** — it meets "sem conflito" with a database guarantee, keeps URLs short and stable across title edits, and reuses a collision-retry pattern the project already established, without adding dependencies. The UUID stays as internal PK and storage-key root.
 
-**Decision:** _[pending]_
+**Decision:** B (node:crypto short id, unique column + retry on collision)
 
 ---
 
@@ -333,7 +335,7 @@ Object storage itself is **not** an open choice: `docs/diagrams/software-arch.me
 
 **Recommendation:** **Option A (presigned GET + `302`)** — it satisfies streaming via native `Range`/`206` and download via `Content-Disposition` without routing video bytes through the API, exactly as the architecture models it; HLS remains a possible future evolution, not a Phase 03 need. Stream/download are only available when the video is `ready` (TD-11).
 
-**Decision:** _[pending]_
+**Decision:** A (API authorizes + 302 to presigned GET; storage serves Range/206)
 
 ---
 
@@ -359,7 +361,7 @@ Object storage itself is **not** an open choice: `docs/diagrams/software-arch.me
 
 **Recommendation:** **Option A (single `status` enum with queue retries and terminal `failed`)** — it maps one-to-one to the phase's described lifecycle (rascunho → processando → pronto/erro), is the simplest state to guard and test, and leaves Phase 04 free to add publication/visibility as its own field without changing these states. Retry policy: 3 attempts, exponential backoff; non-retryable media errors fail immediately.
 
-**Decision:** _[pending]_
+**Decision:** A (Single status enum with queue retries and terminal failed)
 
 ---
 
@@ -367,17 +369,17 @@ Object storage itself is **not** an open choice: `docs/diagrams/software-arch.me
 
 | ID | Scope | Decision | Recommendation | Choice |
 |----|-------|----------|----------------|--------|
-| TD-01 | Backend | Object storage client library | **A** (AWS SDK v3: `@aws-sdk/client-s3` + `@aws-sdk/s3-request-presigner`) | _[pending]_ |
-| TD-02 | Backend | Storage endpoint topology for presigned URLs | **A** (internal endpoint for calls + public endpoint for client-facing signing) | _[pending]_ |
-| TD-03 | Backend | Bucket and object key layout | **A** (single private bucket, `videos/{videoId}/source` + `thumbnail.jpg`) | _[pending]_ |
-| TD-04 | Backend | Background processing queue technology | **A** (BullMQ + Redis via `@nestjs/bullmq`) | _[pending]_ |
-| TD-05 | Cross-layer | Upload protocol for files up to 10GB | **A** (presigned S3 multipart, direct to storage, 64 MiB parts, 10 GiB max) | _[pending]_ |
-| TD-06 | Cross-layer | Draft pre-registration and upload completion signal | **A** (row created on initiation + explicit completion endpoint) | _[pending]_ |
-| TD-07 | Backend | Video worker runtime | **A** (same codebase, separate entrypoint and Compose service) | _[pending]_ |
-| TD-08 | Backend | Metadata extraction and thumbnail generation | **A** (system `ffprobe`/`ffmpeg` via `execFile`, input from presigned internal URL) | _[pending]_ |
-| TD-09 | Cross-layer | Unique public video identifier | **B** (`node:crypto` 11-char id, unique column + retry) | _[pending]_ |
-| TD-10 | Cross-layer | Streaming and download delivery | **A** (API authorizes + `302` to presigned GET; storage serves `Range`/`206`) | _[pending]_ |
-| TD-11 | Backend | Video status lifecycle and failure handling | **A** (`draft → processing → ready \| failed`, 3 retries, terminal `failed` with reason) | _[pending]_ |
+| TD-01 | Backend | Object storage client library | **A** (AWS SDK v3: `@aws-sdk/client-s3` + `@aws-sdk/s3-request-presigner`) | **A** |
+| TD-02 | Backend | Storage endpoint topology for presigned URLs | **A** (internal endpoint for calls + public endpoint for client-facing signing) | **A** |
+| TD-03 | Backend | Bucket and object key layout | **A** (single private bucket, `videos/{videoId}/source` + `thumbnail.jpg`) | **A** |
+| TD-04 | Backend | Background processing queue technology | **A** (BullMQ + Redis via `@nestjs/bullmq`) | **A** |
+| TD-05 | Cross-layer | Upload protocol for files up to 10GB | **A** (presigned S3 multipart, direct to storage, 64 MiB parts, 10 GiB max) | **A** |
+| TD-06 | Cross-layer | Draft pre-registration and upload completion signal | **A** (row created on initiation + explicit completion endpoint) | **A** |
+| TD-07 | Backend | Video worker runtime | **A** (same codebase, separate entrypoint and Compose service) | **A** |
+| TD-08 | Backend | Metadata extraction and thumbnail generation | **A** (system `ffprobe`/`ffmpeg` via `execFile`, input from presigned internal URL) | **A** |
+| TD-09 | Cross-layer | Unique public video identifier | **B** (`node:crypto` 11-char id, unique column + retry) | **B** |
+| TD-10 | Cross-layer | Streaming and download delivery | **A** (API authorizes + `302` to presigned GET; storage serves `Range`/`206`) | **A** |
+| TD-11 | Backend | Video status lifecycle and failure handling | **A** (`draft → processing → ready \| failed`, 3 retries, terminal `failed` with reason) | **A** |
 
 ---
 

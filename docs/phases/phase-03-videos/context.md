@@ -3,12 +3,13 @@ kind: phase
 name: phase-03-videos
 sources_mtime:
   docs/project-plan.md: "2026-11-16T21:45:45-03:00"
-  docs/decisions/technical-decisions-phase-03-videos.md: "2026-11-17T09:01:33-03:00"
+  docs/decisions/technical-decisions-phase-03-videos.md: "2026-11-17T09:24:06-03:00"
   docs/decisions/technical-decisions-openapi-docs-nestjs.md: "2026-11-16T21:45:45-03:00"
   docs/phases/phase-01-configuracao-base/context.md: "2026-11-16T21:45:45-03:00"
   docs/phases/phase-02-auth/context.md: "2026-11-16T21:45:45-03:00"
   docs/phases/phase-02-auth-frontend/context.md: "2026-11-16T21:45:45-03:00"
   .claude/skills/testing-guide-nestjs-project/SKILL.md: "2026-11-16T21:45:45-03:00"
+  docs/phases/phase-03-videos/library-refs.md: "2026-11-17T09:25:52-03:00"
 ---
 
 # phase-03-videos — Context
@@ -48,17 +49,17 @@ sources_mtime:
 
 | Ref | Source | Scope | Topic | Status | Decision | Libraries |
 |-----|--------|-------|-------|--------|----------|-----------|
-| phase-03-videos/TD-01 | phase | Backend | Object Storage Client Library | pending | — | — |
-| phase-03-videos/TD-02 | phase | Backend | Storage Endpoint Topology for Presigned URLs (internal vs pu… | pending | — | — |
-| phase-03-videos/TD-03 | phase | Backend | Bucket and Object Key Layout | pending | — | — |
-| phase-03-videos/TD-04 | phase | Backend | Background Processing Queue Technology | pending | — | — |
-| phase-03-videos/TD-05 | phase | Cross-layer | Upload Protocol for Files up to 10GB | pending | — | — |
-| phase-03-videos/TD-06 | phase | Cross-layer | Draft Pre-registration and Upload Completion Signal | pending | — | — |
-| phase-03-videos/TD-07 | phase | Backend | Video Worker Runtime | pending | — | — |
-| phase-03-videos/TD-08 | phase | Backend | Metadata Extraction and Thumbnail Generation Approach | pending | — | — |
-| phase-03-videos/TD-09 | phase | Cross-layer | Unique Public Video Identifier | pending | — | — |
-| phase-03-videos/TD-10 | phase | Cross-layer | Streaming and Download Delivery | pending | — | — |
-| phase-03-videos/TD-11 | phase | Backend | Video Status Lifecycle and Processing Failure Handling | pending | — | — |
+| phase-03-videos/TD-01 | phase | Backend | Object Storage Client Library | decided | A (AWS SDK v3) | @aws-sdk/client-s3, @aws-sdk/s3-request-presigner |
+| phase-03-videos/TD-02 | phase | Backend | Storage Endpoint Topology for Presigned URLs (internal vs… | decided | A (internal endpoint for calls + public endpoint for signing) | — |
+| phase-03-videos/TD-03 | phase | Backend | Bucket and Object Key Layout | decided | A (single private bucket, per-video prefix) | — |
+| phase-03-videos/TD-04 | phase | Backend | Background Processing Queue Technology | decided | A (BullMQ on Redis via @nestjs/bullmq) | bullmq, @nestjs/bullmq |
+| phase-03-videos/TD-05 | phase | Cross-layer | Upload Protocol for Files up to 10GB | decided | A (direct-to-storage S3 multipart, presigned part URLs) | — |
+| phase-03-videos/TD-06 | phase | Cross-layer | Draft Pre-registration and Upload Completion Signal | decided | A (pre-register on initiation + explicit completion endpoint) | — |
+| phase-03-videos/TD-07 | phase | Backend | Video Worker Runtime | decided | A (same codebase, separate entrypoint and Compose service) | — |
+| phase-03-videos/TD-08 | phase | Backend | Metadata Extraction and Thumbnail Generation Approach | decided | A (system ffprobe/ffmpeg via execFile) | — |
+| phase-03-videos/TD-09 | phase | Cross-layer | Unique Public Video Identifier | decided | B (node:crypto short id + unique column + retry) | — |
+| phase-03-videos/TD-10 | phase | Cross-layer | Streaming and Download Delivery | decided | A (API authorizes + 302 to presigned GET) | — |
+| phase-03-videos/TD-11 | phase | Backend | Video Status Lifecycle and Processing Failure Handling | decided | A (single status enum, queue retries, terminal failed) | — |
 
 _Source files:_
 
@@ -80,7 +81,60 @@ _Source files:_
 
 ## Decisions Detail
 
-_No decided TDs yet._
+### phase-03-videos/TD-01
+
+**Recommendation:** the production target is S3 and the dev target is MinIO; the official SDK is the only option where both are first-class and every operation of the upload flow (TD-05) can be presigned with the same API. The checksum default must be set to `WHEN_REQUIRED` on the client used for presigning.
+**Libraries:** @aws-sdk/client-s3, @aws-sdk/s3-request-presigner
+
+### phase-03-videos/TD-02
+
+**Recommendation:** it is the only option that keeps service-to-service traffic on Compose service names while still issuing URLs the client can reach, with zero extra infrastructure. Env keys: `S3_ENDPOINT`, `S3_PUBLIC_ENDPOINT`, `S3_REGION`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_BUCKET`, validated by the existing Joi schema (Phase 01 TD-02).
+**Libraries:** —
+
+### phase-03-videos/TD-03
+
+**Recommendation:** it keeps every asset behind the API's authorization decision (needed for drafts now and unlisted videos in Phase 04) with a single provisioning step. The bucket is created by a one-shot `minio/mc` init service in `compose.yaml` (`mc mb --ignore-existing`). Incomplete multipart uploads are reclaimed by MinIO's stale-upload expiry (`api stale_uploads_expiry`, default 24h); on AWS S3 the equivalent is an `AbortIncompleteMultipartUpload` lifecycle rule.
+**Libraries:** —
+
+### phase-03-videos/TD-04
+
+**Recommendation:** it is the only option with an official NestJS integration that also provides job-queue semantics (attempts, backoff, unrecoverable errors, idempotent `jobId`) out of the box, which TD-11's failure policy depends on; Redis is a lightweight container that matches the separate "Message Queue" node of the architecture. Use `jobId = videoId` so a repeated completion never enqueues duplicate work. Env keys: `REDIS_HOST`, `REDIS_PORT`.
+**Libraries:** bullmq, @nestjs/bullmq
+
+### phase-03-videos/TD-05
+
+**Recommendation:** it is the only option where the API never touches the video bytes and that supports 10GB natively on both MinIO and S3. Parameters: maximum size **10 GiB** (10 × 1024³ bytes) declared at initiation and verified at completion (`HeadObject`); server-defined part size **64 MiB** (≤ 160 parts for 10 GiB, well inside the 10,000-part limit and above the 5 MiB minimum); declared content type restricted to `video/*`; part URLs issued on demand with a bounded TTL.
+**Libraries:** —
+
+### phase-03-videos/TD-06
+
+**Recommendation:** it keeps validation, ownership and the status machine (TD-11) inside the API, works identically on MinIO and S3, and is directly testable with the Compose stack; the abandoned-upload case is already bounded by storage-side expiry (TD-03).
+**Libraries:** —
+
+### phase-03-videos/TD-07
+
+**Recommendation:** it delivers the process isolation the architecture requires while reusing every existing module and keeping one toolchain for tests, `tsc` and lint.
+**Libraries:** —
+
+### phase-03-videos/TD-08
+
+**Recommendation:** no unmaintained wrapper, no 10GB copy, and the parsed `ffprobe` JSON is fully typed under the project's strict TS rules. Policy: thumbnail frame at 10% of the duration (avoids black opening frames; `0s` when duration is unknown), JPEG scaled to 1280px width; persisted metadata = duration (seconds), width, height, video codec, audio codec, container format, bitrate, size.
+**Libraries:** —
+
+### phase-03-videos/TD-09
+
+**Recommendation:** it meets "sem conflito" with a database guarantee, keeps URLs short and stable across title edits, and reuses a collision-retry pattern the project already established, without adding dependencies. The UUID stays as internal PK and storage-key root.
+**Libraries:** —
+
+### phase-03-videos/TD-10
+
+**Recommendation:** it satisfies streaming via native `Range`/`206` and download via `Content-Disposition` without routing video bytes through the API, exactly as the architecture models it; HLS remains a possible future evolution, not a Phase 03 need. Stream/download are only available when the video is `ready` (TD-11).
+**Libraries:** —
+
+### phase-03-videos/TD-11
+
+**Recommendation:** it maps one-to-one to the phase's described lifecycle (rascunho → processando → pronto/erro), is the simplest state to guard and test, and leaves Phase 04 free to add publication/visibility as its own field without changing these states. Retry policy: 3 attempts, exponential backoff; non-retryable media errors fail immediately.
+**Libraries:** —
 
 ## Inherited Decisions Detail
 
