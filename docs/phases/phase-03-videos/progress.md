@@ -1,7 +1,7 @@
 # phase-03-videos — Progress
 
 **Status:** in_progress
-**SIs:** 8/11 completed
+**SIs:** 9/11 completed
 
 ### SI-03.1 — Infra: dependências, configuração de storage/fila e serviços MinIO/Redis no Compose
 - **Status:** completed
@@ -89,9 +89,15 @@
   - Nenhum vídeo semeado entra na fila, então o `video-worker` no ar não interfere.
 
 ### SI-03.9 — Endpoints de upload: POST /videos, POST /videos/{public_id}/upload/parts e POST /videos/{public_id}/upload/completion
-- **Status:** pending
-- **Tests:** —
-- **Observations:** none
+- **Status:** completed
+- **Tests:** 8 e2e (`test/videos-upload.e2e-spec.ts`, escrito a partir de `specs/videos-upload.plan.md`); suíte unitária/integração 276 e e2e 60 (todas as suítes), `tsc` e `lint` limpos
+- **Observations:**
+  - **Controller fino:** `VideosController` só delega ao `VideosService`; a única decisão é de transporte — `completion` responde 202 quando `transitioned` e 200 caso contrário, via `@Res({ passthrough: true })`. Registrado em `VideosModule`; sem `@Public()`, com `@ApiBearerAuth('access-token')`.
+  - **OpenAPI:** cada rota documenta o sucesso (`type` com os DTOs de resposta) e todos os erros previstos com `ApiErrorEnvelope`; o e2e confere os status e a referência ao envelope contra `buildSwaggerDocument(app)`. O arquivo `openapi.json` exportado não foi regenerado nesta SI (fica para a SI-03.11).
+  - **`GET /videos/{public_id}` ficou para a SI-03.10:** o plano lista a rota no contrato desta SI, mas as tasks e o escopo dela a atribuem à SI-03.10; não implementei para não misturar escopos.
+  - **`message` de validação é uma lista** (`["file_size must not be greater than 10737418240"]`), então o e2e junta as mensagens antes de procurar o nome do campo.
+  - **e2e precisa de `--runInBand`:** o script `test:e2e` do `package.json` não traz a flag, e com 4 suítes compartilhando o banco rodar em paralelo falhou (9 testes, em `auth` e `videos-upload`, por contaminação entre suítes). Com `npm run test:e2e -- --runInBand` as 4 passam, como o `CLAUDE.md` exige. Sugestão de tarefa separada: colocar `--runInBand` no script.
+  - Com o `video-worker` no ar, o job criado pelo e2e é consumido e o vídeo (bytes que não são vídeo) vira `failed`; o teste só afirma o job na fila (que permanece, pois não há `removeOnComplete`) e a resposta HTTP.
 
 ### SI-03.10 — Endpoints de consulta, streaming e download: GET /videos/{public_id}, /stream e /download
 - **Status:** pending

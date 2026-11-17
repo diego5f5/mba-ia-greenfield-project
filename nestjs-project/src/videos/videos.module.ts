@@ -8,6 +8,7 @@ import {
   VIDEO_PROCESSING_QUEUE,
   VIDEO_PROCESSING_QUEUE_JOB_OPTIONS,
 } from './videos.constants';
+import { VideosController } from './videos.controller';
 import { VideosService } from './videos.service';
 
 /**
@@ -24,6 +25,7 @@ import { VideosService } from './videos.service';
     ChannelsModule,
     StorageModule,
   ],
+  controllers: [VideosController],
   providers: [VideosService],
 })
 export class VideosModule {}
